@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Тёмная тема -->
+    <color name="dark_bg">#1E1F22</color>
+    <color name="dark_text">#ECECEC</color>
+    <color name="dark_accent">#00E5FF</color>
+    <color name="dark_panel">#2A2B30</color>
+
+    <!-- Бежевая тема -->
+    <color name="beige_bg">#EFE6D2</color>
+    <color name="beige_text">#1B1A17</color>
+    <color name="beige_accent">#2340FF</color>
+    <color name="beige_panel">#FFFDF5</color>
+
+    <!-- Светлая тема -->
+    <color name="light_bg">#FFFFFF</color>
+    <color name="light_text">#050505</color>
+    <color name="light_accent">#0F2BD8</color>
+    <color name="light_panel">#F3F3F3</color>
+</resources>
