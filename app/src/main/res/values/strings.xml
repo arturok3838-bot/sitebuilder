@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Site Builder</string>
+    <string name="title_preview">Просмотр</string>
+    <string name="title_settings">Настройки</string>
+    <string name="hint_html">Введите HTML-код здесь...</string>
+    <string name="btn_preview">Просмотр</string>
+    <string name="btn_save">Сохранить</string>
+    <string name="btn_open">Открыть</string>
+    <string name="btn_template">Шаблон</string>
+    <string name="btn_clear">Очистить</string>
+    <string name="btn_settings">Тема</string>
+    <string name="draft_saved">Черновик сохранён</string>
+    <string name="file_saved">Файл сохранён в Documents/SiteBuilder</string>
+    <string name="confirm_clear">Очистить поле?</string>
+    <string name="yes">Да</string>
+    <string name="no">Нет</string>
+    <string name="error_save">Ошибка сохранения</string>
+    <string name="error_load">Ошибка загрузки</string>
+</resources>
