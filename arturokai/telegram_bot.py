@@ -25,6 +25,7 @@ import time
 import requests
 
 from .config import load_config
+from .envfile import load_env
 from .store import Store, StoreError
 
 API = "https://api.telegram.org/bot{token}/{method}"
@@ -144,6 +145,7 @@ class Bot:
 
 
 def main():
+    load_env()                      # читаем токен и ключи из файла .env, если он есть
     token = os.environ.get("ARTUROKAI_BOT_TOKEN")
     if not token:
         sys.exit("Задайте ARTUROKAI_BOT_TOKEN (токен от @BotFather) в переменных окружения.")

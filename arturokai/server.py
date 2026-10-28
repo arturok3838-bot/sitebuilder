@@ -28,11 +28,13 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 from .config import ROOT, load_config
+from .envfile import load_env
 from .llm import STATS_MARK, LocalLLM
 from .security import install as install_security
 from .store import NotEnoughCredits, Store, StoreError
 from .zip_tools import ZipError, build_context, code_blocks_to_zip, safe_extract, tree
 
+load_env()               # ключи внешних нейросетей (DEEPSEEK_API_KEY и т. п.) из .env
 cfg = load_config()
 OUT, WS = cfg["output_dir"], cfg["workspace_dir"]
 WEB = ROOT / "web"
