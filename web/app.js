@@ -262,7 +262,8 @@ function applyEngine() {
   }
   const prov = (status.providers || []).find((p) => p.id === engine);
   if (prov) $("#chat-cost").textContent = `Стоимость сообщения: ${credits(prov.cost)} (${esc(prov.label)})`;
-  $("#efforts").classList.toggle("dim", engine !== "local");
+  // Уровень усилий влияет и на встроенную, и на внешние модели — не затемняем.
+  $("#efforts").classList.toggle("dim", engine !== "local" && engine !== "builtin");
 }
 $("#engine").addEventListener("change", (e) => {
   const id = e.target.value;
@@ -274,7 +275,7 @@ $("#engine").addEventListener("change", (e) => {
   engine = id;
   try { localStorage.setItem("engine", engine); } catch {}
   applyEngine();
-  if (engine === "local") warmup();
+  warmup();
 });
 
 setInterval(async () => {
@@ -546,8 +547,9 @@ $("#explain").addEventListener("change", applyEffortLimits);
 
 // Просим сервер заранее загрузить модель, чтобы ответ начался без ожидания.
 function warmup() {
-  if (location.hash !== "#code" || !me || engine !== "local") return;  // внешним моделям прогрев не нужен
-  postJSON("/api/warmup", { effort, model: $("#model").value || null, project_id: projectId }).catch(() => {});
+  // Прогрев нужен локальной и встроенной моделям; внешним (по API) — нет.
+  if (location.hash !== "#code" || !me || (engine !== "local" && engine !== "builtin")) return;
+  postJSON("/api/warmup", { effort, engine, model: $("#model").value || null, project_id: projectId }).catch(() => {});
 }
 $("#model").addEventListener("change", warmup);
 

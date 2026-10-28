@@ -293,3 +293,21 @@ def test_free_engine_on_free_plan(fake_openai, monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "x")
     assert c.post("/api/chat", json={"messages": [{"role": "user", "content": "hi"}],
                                      "engine": "deepseek"}).status_code == 403
+
+
+def test_builtin_engine(monkeypatch):
+    import arturokai.local_model as lm
+    monkeypatch.setattr(lm, "available", lambda cfg: True)
+
+    def fake_stream(cfg, msgs, system, maxtok):
+        yield "Готово"
+        yield lm.STATS_MARK + json.dumps({"model": "builtin", "tokens": 1, "tok_per_s": 1, "load_s": 0, "total_s": 1})
+
+    monkeypatch.setattr(lm, "chat_stream", fake_stream)
+    c = client("builtinuser")
+    provs = {p["id"]: p for p in c.get("/api/status").json()["providers"]}
+    assert provs["builtin"]["free"] is True          # встроенная — бесплатная, видна в выборе
+    before = c.get("/api/me").json()["total"]
+    r = c.post("/api/chat", json={"messages": [{"role": "user", "content": "hi"}], "engine": "builtin"})
+    assert "Готово" in r.text
+    assert c.get("/api/me").json()["total"] == before - server.COSTS["chat"]

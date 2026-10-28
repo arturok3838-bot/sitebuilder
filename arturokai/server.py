@@ -226,6 +226,7 @@ class ChatReq(BaseModel):
 class WarmupReq(BaseModel):
     model: str | None = None
     effort: Literal["low", "medium", "high"] = "medium"
+    engine: str = "local"
     project_id: str | None = None
 
 
@@ -309,9 +310,14 @@ def plans():
 def status(u: dict = Depends(current_user)):
     efforts = {k: {"label": e["label"], "use": e["use"], "cost": COSTS["chat"] * e["cost_mult"]}
                for k, e in cfg["llm"]["efforts"].items()}
-    providers = [{"id": p["id"], "label": p["label"], "free": p["free"],
-                  "cost": COSTS["chat"] * p["cost_mult"]}
-                 for p in llm.providers() if p["enabled"]]
+    providers = []
+    from . import local_model
+    if local_model.available(cfg["llm"]):
+        providers.append({"id": "builtin", "label": "Встроенная (без ключа)", "free": True,
+                          "cost": COSTS["chat"] * cfg["llm"]["builtin"].get("cost_mult", 1)})
+    providers += [{"id": p["id"], "label": p["label"], "free": p["free"],
+                   "cost": COSTS["chat"] * p["cost_mult"]}
+                  for p in llm.providers() if p["enabled"]]
     return {"models": llm.available_models() if u["is_admin"] else [],
             "default_model": cfg["llm"]["model"], "fast_model": cfg["llm"]["fast_model"],
             "efforts": efforts, "providers": providers,
@@ -428,7 +434,15 @@ def chat(req: ChatReq, u: dict = Depends(current_user)):
             if m.get("role") in ("user", "assistant")]
     context = project_context(req.project_id, u)
 
-    if req.engine and req.engine != "local":
+    if req.engine == "builtin":
+        from . import local_model
+        if not local_model.available(cfg["llm"]):
+            raise HTTPException(400, "Встроенная модель недоступна на этом сервере")
+        cost = COSTS["chat"] * cfg["llm"]["builtin"].get("cost_mult", 1)   # бесплатная, но тратит кредиты как защита от спама
+        charge(u, cost, "Код · Встроенная")
+        system = llm._system(context, req.explain)
+        source = local_model.chat_stream(cfg["llm"], msgs, system, llm.effort(req.effort)["num_predict"])
+    elif req.engine and req.engine != "local":
         provider = llm.provider(req.engine)
         enabled = {p["id"] for p in llm.providers() if p["enabled"]}
         if provider is None or req.engine not in enabled:
@@ -461,6 +475,11 @@ def chat(req: ChatReq, u: dict = Depends(current_user)):
 @app.post("/api/warmup")
 def warmup(req: WarmupReq, u: dict = Depends(current_user)):
     """Сайт вызывает это при открытии раздела «Код» и смене уровня — модель грузится заранее."""
+    if req.engine == "builtin":
+        from . import local_model
+        if local_model.available(cfg["llm"]):
+            local_model.warmup(cfg["llm"])
+        return {"model": "builtin"}
     model = llm.model_for(req.effort, req.model if u["is_admin"] else None)
     llm.warmup(model, project_context(req.project_id, u))
     return {"model": model}
