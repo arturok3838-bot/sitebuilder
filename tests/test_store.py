@@ -103,3 +103,16 @@ def test_sheets_crud(store):
     assert store.get_sheet(s["id"], other["id"]) is None
     store.delete_sheet(s["id"], u["id"])
     assert store.list_sheets(u["id"]) == []
+
+
+def test_register_by_email(store):
+    u = store.create_user("Masha@Mail.RU", "secret1")
+    assert u["login"] == "Masha@Mail.RU" and u["plan"] == "free"
+    # вход по email, без учёта регистра
+    assert store.authenticate("masha@mail.ru", "secret1")["id"] == u["id"]
+    # тот же email повторно — занят
+    with pytest.raises(StoreError):
+        store.create_user("masha@mail.ru", "another1")
+    # кривой email — ошибка
+    with pytest.raises(StoreError):
+        store.create_user("bad@", "secret1")

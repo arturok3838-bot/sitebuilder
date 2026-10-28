@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import json
 import math
+import re
 import secrets
 import sqlite3
 import threading
@@ -99,6 +100,13 @@ def verify_password(password: str, stored: str) -> bool:
     return hmac.compare_digest(check, digest)
 
 
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def is_email(value: str) -> bool:
+    return bool(EMAIL_RE.match(value.strip()))
+
+
 def new_code() -> str:
     groups = ("".join(secrets.choice(CODE_ALPHABET) for _ in range(4)) for _ in range(3))
     return "ARTK-" + "-".join(groups)
@@ -161,8 +169,11 @@ class Store:
     # ---------- пользователи ----------
     def create_user(self, login: str, password: str, is_admin=False) -> dict:
         login = login.strip()
-        if not (3 <= len(login) <= 32) or not all(c.isalnum() or c in "_.-" for c in login):
-            raise StoreError("Логин: 3–32 символа, буквы, цифры, _ . -")
+        if is_email(login):
+            if len(login) > 254:
+                raise StoreError("Слишком длинный email")
+        elif not (3 <= len(login) <= 32 and all(c.isalnum() or c in "_.-" for c in login)):
+            raise StoreError("Введите email или логин (3–32 символа: буквы, цифры, _ . -)")
         if len(password) < 6:
             raise StoreError("Пароль — минимум 6 символов")
         free = self.plans["free"]

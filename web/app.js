@@ -131,7 +131,7 @@ $$("[data-auth]").forEach((b) =>
     $("#auth-form").password.autocomplete = authMode === "login" ? "current-password" : "new-password";
     $("#auth-hint").textContent = authMode === "login"
       ? "Нет аккаунта? Нажмите «Регистрация» — бесплатный тариф подключится сразу."
-      : "Логин: 3–32 символа (буквы, цифры, _ . -). Пароль — от 6 символов.";
+      : "Укажите email (или логин 3–32 символа) и пароль от 6 символов.";
   }),
 );
 $("#auth-form").addEventListener("submit", async (e) => {
