@@ -12,6 +12,7 @@ import csv
 import io
 import itertools
 import math
+import os
 import queue
 import shutil
 import threading
@@ -44,6 +45,19 @@ COOKIE = "arturokai_session"
 
 llm = LocalLLM(cfg["llm"])
 store = Store(BILL["db"], PLANS, COSTS)
+
+
+def ensure_admin():
+    """Создаёт администратора из переменных окружения (ARTUROKAI_ADMIN_LOGIN/PASSWORD).
+
+    Удобно для первого запуска: задали логин и пароль в .env — админ появился сам.
+    """
+    login = os.environ.get("ARTUROKAI_ADMIN_LOGIN")
+    password = os.environ.get("ARTUROKAI_ADMIN_PASSWORD")
+    if login and password:
+        store.set_admin(login, password)
+        print(f"Администратор готов: {login}")
+
 
 app = FastAPI(title="ARTurokAI")
 rate_limiter = install_security(app, cfg)
@@ -573,6 +587,7 @@ def main():
     ap.add_argument("--host", default="127.0.0.1", help="0.0.0.0 — открыть сайт в локальной сети")
     ap.add_argument("--port", type=int, default=7860)
     args = ap.parse_args()
+    ensure_admin()
     print(f"ARTurokAI: http://{'127.0.0.1' if args.host == '0.0.0.0' else args.host}:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port)
 

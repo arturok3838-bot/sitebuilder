@@ -116,13 +116,25 @@ class Store:
     def __init__(self, path: str | Path, plans: dict, costs: dict | None = None):
         self.plans = plans          # эти словари меняются «на месте», когда админ правит цены,
         self.costs = costs or {}    # поэтому все, кто держит ссылку, сразу видят новые цены
-        self.lock = threading.RLock()
-        self.db = sqlite3.connect(str(path), check_same_thread=False)
-        self.db.row_factory = sqlite3.Row
-        self.db.execute("PRAGMA foreign_keys = ON")
-        self.db.execute("PRAGMA journal_mode = WAL")
+        self.path = str(path)
+        self.lock = threading.RLock()       # сериализует запись между потоками
+        self._local = threading.local()     # у каждого потока — своё соединение с базой
         self.db.executescript(SCHEMA)
         self._apply_pricing()
+
+    @property
+    def db(self):
+        # Сайт обслуживает запросы в нескольких потоках; одно соединение SQLite на все
+        # потоки использовать нельзя, поэтому выдаём каждому потоку собственное.
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self.path, check_same_thread=False, timeout=30)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA busy_timeout = 30000")
+            self._local.conn = conn
+        return conn
 
     # ---------- цены (переопределения админа поверх config.yaml) ----------
     def _apply_pricing(self):
