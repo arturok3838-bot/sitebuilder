@@ -16,6 +16,7 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; }
+html { scroll-padding-top: 76px; }
 body {
   background: radial-gradient(1200px 600px at 80% -10%, #2a1f5c55, transparent),
               radial-gradient(900px 500px at -10% 10%, #0e4a5a44, transparent), var(--bg);
@@ -30,7 +31,7 @@ h1, h2, h3 { line-height: 1.2; margin: 0 0 .6em; }
 .topbar {
   position: sticky; top: 0; z-index: 10;
   display: flex; align-items: center; gap: 24px;
-  padding: 14px 28px; background: #0b0b12cc; backdrop-filter: blur(12px);
+  padding: 14px 28px; background: var(--bg); box-shadow: 0 1px 0 var(--line);
   border-bottom: 1px solid var(--line);
 }
 .logo { display: flex; align-items: center; gap: 10px; font-size: 19px; font-weight: 600; }
@@ -131,7 +132,8 @@ input[type=range] { padding: 0; accent-color: var(--accent); }
 .msg pre button { position: absolute; top: 6px; right: 8px; background: var(--panel); color: var(--muted); border: 1px solid var(--line); border-radius: 6px; font-size: 12px; cursor: pointer; padding: 2px 8px; }
 .msg code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
 .speed { margin-top: 6px; color: var(--muted); font-size: 12px; }
-.modes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 14px; padding: 4px; background: var(--bg); border-radius: 12px; }
+.field-label { color: var(--muted); font-size: 13px; margin-bottom: 6px; }
+.modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 12px; padding: 4px; background: var(--bg); border-radius: 12px; }
 .modes button { background: none; border: 0; border-radius: 9px; padding: 8px 6px; color: var(--muted); font: inherit; cursor: pointer; }
 .modes button small { display: block; font-size: 11px; opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .modes button.on { background: var(--panel); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
@@ -190,6 +192,15 @@ form.off { opacity: .5; pointer-events: none; }
 .tag.free { background: #4ade8022; color: #4ade80; }
 .tag.used { background: var(--bg2); color: var(--muted); }
 figure { margin: 0; }
+
+/* Переключатель «Объяснение», микрофон, кнопки у блоков кода */
+.switch { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 14px; cursor: pointer; margin-bottom: 12px; }
+.switch input { width: auto; margin: 0; accent-color: var(--accent); }
+.btn.mic { padding: 0 14px; font-size: 18px; }
+.btn.mic.on { background: var(--danger); border-color: transparent; animation: pulse 1.1s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
+.pre-btns { position: absolute; top: 6px; right: 8px; display: flex; gap: 6px; }
+.msg pre .pre-btns button { position: static; }
 
 /* Просмотр и уведомления */
 #lightbox { position: fixed; inset: 0; z-index: 50; background: #000d; display: grid; place-items: center; padding: 24px; cursor: zoom-out; }

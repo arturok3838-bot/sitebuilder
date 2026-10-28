@@ -5,7 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ARTurokAI</title>
   <meta name="description" content="Нейросеть ARTurokAI: фото по описанию и по примеру, видео до 2 минут и код.">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%237c5cff'/><text x='16' y='22' font-size='16' text-anchor='middle' fill='white' font-family='Arial' font-weight='bold'>A</text></svg>">
+  <meta name="theme-color" content="#0b0b12">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="ARTurokAI">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon-192.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -22,6 +29,7 @@
     </nav>
     <span id="queue" class="pill" title="Ваших задач в работе" hidden>⏳ 0</span>
     <a id="balance" class="pill balance" href="#cabinet" title="Сколько осталось кредитов тарифа" hidden></a>
+    <button id="install" class="btn small" type="button" hidden>⤓ Установить</button>
     <a id="login-btn" class="btn primary small" href="#auth">Войти</a>
   </header>
 
@@ -141,19 +149,19 @@
             <span id="zip-text">Перетащите ZIP проекта или нажмите</span>
           </label>
           <pre class="tree" id="zip-tree" hidden></pre>
-          <div class="modes">
-            <button type="button" data-mode="fast"><b>⚡ Быстро</b><small id="mode-fast-model"></small></button>
-            <button type="button" data-mode="precise"><b>🎯 Точно</b><small id="mode-precise-model"></small></button>
-          </div>
-          <label id="model-box" hidden>Модель (админ)<select id="model"><option value="">Авто — по режиму</option></select></label>
+          <div class="field-label">Уровень усилий</div>
+          <div class="modes" id="efforts"></div>
+          <label class="switch"><input type="checkbox" id="explain"><span>Подробное объяснение</span></label>
+          <label id="model-box" hidden>Модель (админ)<select id="model"><option value="">Авто — по уровню</option></select></label>
           <p class="hint" id="chat-cost"></p>
-          <button class="btn wide" id="export">⬇ Скачать код как ZIP</button>
+          <button class="btn wide" id="export">⬇ Скачать всё кодом (ZIP)</button>
           <button class="btn ghost wide" id="clear">Очистить чат</button>
         </aside>
         <div class="panel chat">
           <div id="messages"><p class="empty">Опишите задачу: «Напиши сайт-визитку», «Найди ошибку в моём проекте»…</p></div>
           <form id="chat-form">
-            <textarea id="chat-input" rows="2" placeholder="Напишите задачу…" title="Enter — отправить, Shift+Enter — новая строка"></textarea>
+            <button class="btn mic" type="button" id="mic" title="Голосовой ввод">🎤</button>
+            <textarea id="chat-input" rows="2" placeholder="Напишите или надиктуйте задачу…" title="Enter — отправить, Shift+Enter — новая строка"></textarea>
             <button class="btn primary">➤</button>
           </form>
         </div>

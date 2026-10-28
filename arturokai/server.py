@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 
 from .config import ROOT, load_config
 from .llm import STATS_MARK, LocalLLM
+from .security import install as install_security
 from .store import NotEnoughCredits, Store, StoreError
 from .zip_tools import ZipError, build_context, code_blocks_to_zip, safe_extract, tree
 
@@ -43,6 +44,7 @@ llm = LocalLLM(cfg["llm"])
 store = Store(BILL["db"], PLANS)
 
 app = FastAPI(title="ARTurokAI")
+rate_limiter = install_security(app, cfg)
 jobs: dict[str, dict] = {}
 job_queue: queue.PriorityQueue = queue.PriorityQueue()
 _order = itertools.count()       # при равном приоритете — кто раньше пришёл
@@ -138,6 +140,11 @@ if cfg["llm"].get("preload"):
 
 
 def submit(u: dict, kind: str, params: dict, cost: int) -> dict:
+    # Защита очереди от флуда: не даём одному пользователю забить её задачами.
+    pending = sum(1 for j in jobs.values()
+                  if j["user_id"] == u["id"] and j["status"] in ("queued", "running"))
+    if pending >= int(cfg["security"]["max_pending_jobs"]):
+        raise HTTPException(429, "Дождитесь завершения текущих задач")
     charge(u, cost, "Фото" if kind == "image" else f"Видео {params['seconds']:g} сек")
     job = dict(id=uuid.uuid4().hex[:12], kind=kind, params=params, user_id=u["id"], cost=cost,
                status="queued", progress=0.0, desc="В очереди", result=[], error=None, created=time.time())
@@ -194,13 +201,14 @@ class VideoReq(BaseModel):
 class ChatReq(BaseModel):
     messages: list[dict]
     model: str | None = None          # явный выбор модели — только для администратора
-    mode: Literal["fast", "precise"] = "fast"
+    effort: Literal["low", "medium", "high"] = "medium"
+    explain: bool = False             # подробное объяснение решения
     project_id: str | None = None
 
 
 class WarmupReq(BaseModel):
     model: str | None = None
-    mode: Literal["fast", "precise"] = "fast"
+    effort: Literal["low", "medium", "high"] = "medium"
     project_id: str | None = None
 
 
@@ -270,9 +278,11 @@ def plans():
 
 @app.get("/api/status")
 def status(u: dict = Depends(current_user)):
+    efforts = {k: {"label": e["label"], "use": e["use"], "cost": COSTS["chat"] * e["cost_mult"]}
+               for k, e in cfg["llm"]["efforts"].items()}
     return {"models": llm.available_models() if u["is_admin"] else [],
             "default_model": cfg["llm"]["model"], "fast_model": cfg["llm"]["fast_model"],
-            "image": cfg["image"], "video": cfg["video"], "queue": job_queue.qsize()}
+            "efforts": efforts, "image": cfg["image"], "video": cfg["video"], "queue": job_queue.qsize()}
 
 
 # ---------- генерация ----------
@@ -368,27 +378,31 @@ async def upload_zip(file: UploadFile = File(...), u: dict = Depends(current_use
     return {"project_id": pid, "name": file.filename, "tree": tree(root)}
 
 
-def chat_model(req, u: dict) -> tuple[str, str | None]:
+def effort_check(req, u: dict) -> tuple[str, str | None, int]:
+    """Проверяет доступность уровня усилий по тарифу и считает цену сообщения."""
     plan = plan_of(u)
-    if req.mode not in plan["chat_modes"]:
-        raise HTTPException(403, f"Режим «Точно» недоступен в тарифе «{plan['name']}»")
-    return req.mode, (req.model if u["is_admin"] else None)
+    eff = cfg["llm"]["efforts"][req.effort]
+    if eff["use"] not in plan["chat_modes"]:
+        raise HTTPException(403, f"Уровень «{eff['label']}» недоступен в тарифе «{plan['name']}». "
+                                 "Подключите тариф Старт или Про.")
+    cost = COSTS["chat"] * eff["cost_mult"]
+    return req.effort, (req.model if u["is_admin"] else None), cost
 
 
 @app.post("/api/chat")
 def chat(req: ChatReq, u: dict = Depends(current_user)):
-    mode, model = chat_model(req, u)
-    charge(u, COSTS["chat"], "Сообщение в «Код»")
+    effort, model, cost = effort_check(req, u)
+    charge(u, cost, f"Код · {cfg['llm']['efforts'][effort]['label']}")
     msgs = [{"role": m["role"], "content": m["content"]} for m in req.messages
             if m.get("role") in ("user", "assistant")]
 
     def stream():
         finished = False
-        for piece in llm.chat_stream(msgs, model, project_context(req.project_id, u), mode):
+        for piece in llm.chat_stream(msgs, model, project_context(req.project_id, u), effort, req.explain):
             finished = finished or piece.startswith(STATS_MARK)
             yield piece
-        if not finished:  # модель не ответила (Ollama выключена и т. п.) — кредит возвращаем
-            store.refund(u["id"], COSTS["chat"], "Возврат: модель не ответила")
+        if not finished:  # модель не ответила (Ollama выключена и т. п.) — кредиты возвращаем
+            store.refund(u["id"], cost, "Возврат: модель не ответила")
 
     # X-Accel-Buffering отключает буферизацию в прокси — текст идёт на сайт без задержек.
     return StreamingResponse(stream(), media_type="text/plain; charset=utf-8",
@@ -397,9 +411,8 @@ def chat(req: ChatReq, u: dict = Depends(current_user)):
 
 @app.post("/api/warmup")
 def warmup(req: WarmupReq, u: dict = Depends(current_user)):
-    """Сайт вызывает это при открытии раздела «Код» и смене режима — модель грузится заранее."""
-    mode, model = chat_model(req, u)
-    model = llm.model_for(mode, model)
+    """Сайт вызывает это при открытии раздела «Код» и смене уровня — модель грузится заранее."""
+    model = llm.model_for(req.effort, req.model if u["is_admin"] else None)
     llm.warmup(model, project_context(req.project_id, u))
     return {"model": model}
 
@@ -449,8 +462,25 @@ def admin_users(_: dict = Depends(admin_user)):
     return store.list_users()
 
 
-# ---------- страницы ----------
+# ---------- страницы и установка как приложение (PWA) ----------
 app.mount("/static", StaticFiles(directory=WEB), name="static")
+
+# Эти файлы должны лежать в корне сайта, чтобы установка работала на всех устройствах.
+_ROOT_FILES = {
+    "manifest.webmanifest": "application/manifest+json",
+    "icon-192.png": "image/png", "icon-512.png": "image/png",
+    "icon-maskable.png": "image/png", "apple-touch-icon.png": "image/png",
+}
+for _name, _type in _ROOT_FILES.items():
+    app.add_api_route(f"/{_name}", (lambda n=_name, t=_type: FileResponse(WEB / n, media_type=t)),
+                      methods=["GET"], include_in_schema=False)
+
+
+@app.get("/sw.js", include_in_schema=False)
+def service_worker():
+    # Service-Worker-Allowed: / разрешает воркеру работать для всего сайта.
+    return FileResponse(WEB / "sw.js", media_type="application/javascript",
+                        headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"})
 
 
 @app.get("/")

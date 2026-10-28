@@ -76,12 +76,9 @@ function applyMe() {
   v.classList.toggle("off", !L.video_max_seconds);
   v.querySelector("button").disabled = !L.video_max_seconds;
   vl.innerHTML = `🔒 Видео недоступно в тарифе «${esc(me.plan_name)}». <a href="#cabinet">Подключите тариф Старт или Про</a>.`;
-  $("[data-mode=precise]").disabled = !L.chat_modes.includes("precise");
-  $("[data-mode=precise]").title = L.chat_modes.includes("precise") ? "" : "Доступно в платных тарифах";
-  if (!L.chat_modes.includes(mode)) setMode("fast");
+  applyEffortLimits();
   $("#zip-text").textContent = L.zip ? "Перетащите ZIP проекта или нажмите" : "🔒 ZIP — в платных тарифах";
   $("#zip-drop").classList.toggle("disabled", !L.zip);
-  if (catalog) $("#chat-cost").textContent = `Сообщение — ${credits(catalog.costs.chat)}`;
   renderCabinet();
 }
 
@@ -206,10 +203,39 @@ async function loadStatus() {
   }
   $("#image-form").steps.value = status.image.steps;
   $("#video-form").steps.value = status.video.steps;
-  $("#mode-fast-model").textContent = status.fast_model;
-  $("#mode-precise-model").textContent = status.default_model;
+  renderEfforts();
   $("#model").innerHTML =
-    `<option value="">Авто — по режиму</option>` + status.models.map((m) => `<option>${esc(m)}</option>`).join("");
+    `<option value="">Авто — по уровню</option>` + status.models.map((m) => `<option>${esc(m)}</option>`).join("");
+}
+
+// Кнопки уровней усилий строятся из ответа сервера (их названия и цена — в config.yaml).
+function renderEfforts() {
+  if (!status?.efforts) return;
+  $("#efforts").innerHTML = Object.entries(status.efforts)
+    .map(([id, e]) => `<button type="button" data-effort="${id}" class="${id === effort ? "on" : ""}">
+        <b>${esc(e.label)}</b><small>${credits(e.cost)}</small></button>`)
+    .join("");
+  $$("[data-effort]").forEach((b) => b.addEventListener("click", () => setEffort(b.dataset.effort)));
+  applyEffortLimits();
+}
+
+// Уровень доступен, если его модель (fast/precise) входит в тариф пользователя.
+function applyEffortLimits() {
+  if (!status?.efforts || !me) return;
+  const allowed = me.limits.chat_modes;
+  let cur = status.efforts[effort];
+  $$("[data-effort]").forEach((b) => {
+    const e = status.efforts[b.dataset.effort];
+    const ok = allowed.includes(e.use);
+    b.disabled = !ok;
+    b.title = ok ? "" : "Доступно в платных тарифах";
+  });
+  if (cur && !allowed.includes(cur.use)) {
+    const first = Object.keys(status.efforts).find((id) => allowed.includes(status.efforts[id].use));
+    if (first) setEffort(first);
+  }
+  cur = status.efforts[effort];
+  if (cur) $("#chat-cost").textContent = `Стоимость сообщения: ${credits(cur.cost)}` + ($("#explain").checked ? " · с объяснением" : "");
 }
 
 setInterval(async () => {
@@ -407,7 +433,14 @@ function renderMarkdown(text) {
       html += "<p>" + esc(parts[i].trim()).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>") + "</p>";
     }
     if (i + 2 < parts.length) {
-      html += `<pre><span class="lang">${esc(parts[i + 1])}</span><button type="button" data-copy>Копировать</button><code>${esc(parts[i + 2])}</code></pre>`;
+      const header = parts[i + 1].trim();
+      // Заголовок блока вида "python app/main.py" — имя файла для скачивания артефакта.
+      const name = header.split(/\s+/).find((w) => w.includes(".") || w.includes("/"));
+      const file = name ? name.replace(/^\//, "").replace(/\.\./g, "_") : `code.${header.split(/\s+/)[0] || "txt"}`;
+      html += `<pre><span class="lang">${esc(header)}</span>` +
+        `<span class="pre-btns"><button type="button" data-dl="${esc(file)}" title="Скачать файл">⬇</button>` +
+        `<button type="button" data-copy>Копировать</button></span>` +
+        `<code>${esc(parts[i + 2])}</code></pre>`;
     }
   }
   return html;
@@ -445,29 +478,68 @@ function drawLast() {
   });
 }
 
+// Код из ответа можно скачать: одним файлом (артефактом) или всё сразу (ZIP).
 $("#messages").addEventListener("click", (e) => {
-  if (!e.target.matches("[data-copy]")) return;
-  navigator.clipboard.writeText(e.target.parentElement.querySelector("code").textContent);
-  e.target.textContent = "Скопировано";
+  const pre = e.target.closest("pre");
+  if (e.target.matches("[data-copy]")) {
+    navigator.clipboard.writeText(pre.querySelector("code").textContent);
+    e.target.textContent = "Скопировано";
+  } else if (e.target.matches("[data-dl]")) {
+    const blob = new Blob([pre.querySelector("code").textContent], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = e.target.dataset.dl || "file.txt";
+    a.click();
+  }
 });
 
-/* Режим: ⚡ быстро (лёгкая модель) или 🎯 точно (большая модель) */
-let mode = "fast";
-try { mode = localStorage.getItem("mode") || "fast"; } catch {}
-function setMode(m) {
-  mode = m;
-  try { localStorage.setItem("mode", m); } catch {}
-  $$("[data-mode]").forEach((b) => b.classList.toggle("on", b.dataset.mode === m));
+/* Уровень усилий: low / medium / high (из config.yaml). Чем выше — дороже. */
+let effort = "medium";
+try { effort = localStorage.getItem("effort") || "medium"; } catch {}
+function setEffort(id) {
+  effort = id;
+  try { localStorage.setItem("effort", id); } catch {}
+  $$("[data-effort]").forEach((b) => b.classList.toggle("on", b.dataset.effort === id));
+  applyEffortLimits();
   warmup();
 }
-$$("[data-mode]").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+$("#explain").addEventListener("change", applyEffortLimits);
 
 // Просим сервер заранее загрузить модель, чтобы ответ начался без ожидания.
 function warmup() {
   if (location.hash !== "#code" || !me) return;
-  postJSON("/api/warmup", { mode, model: $("#model").value || null, project_id: projectId }).catch(() => {});
+  postJSON("/api/warmup", { effort, model: $("#model").value || null, project_id: projectId }).catch(() => {});
 }
 $("#model").addEventListener("change", warmup);
+
+/* Голосовой ввод (распознавание речи в браузере) */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recog = null;
+if (SR) {
+  $("#mic").addEventListener("click", () => {
+    if (recog) {
+      recog.stop();
+      return;
+    }
+    recog = new SR();
+    recog.lang = "ru-RU";
+    recog.interimResults = true;
+    const base = $("#chat-input").value;
+    recog.onresult = (e) => {
+      const text = Array.from(e.results).map((r) => r[0].transcript).join("");
+      $("#chat-input").value = (base ? base + " " : "") + text;
+    };
+    recog.onend = () => {
+      $("#mic").classList.remove("on");
+      recog = null;
+    };
+    recog.onerror = () => toast("Не удалось распознать речь. Разрешите доступ к микрофону.");
+    recog.start();
+    $("#mic").classList.add("on");
+  });
+} else {
+  $("#mic").hidden = true;
+}
 
 let sending = false;
 async function sendChat() {
@@ -478,7 +550,8 @@ async function sendChat() {
   input.value = "";
   history.push({ role: "user", content: text });
   const answer = { role: "assistant", content: "" };
-  const req = { messages: history.slice(), mode, model: $("#model").value || null, project_id: projectId };
+  const req = { messages: history.slice(), effort, explain: $("#explain").checked,
+                model: $("#model").value || null, project_id: projectId };
   history.push(answer);
   renderChat();
   const t0 = performance.now();
@@ -617,9 +690,27 @@ document.addEventListener("click", (e) => {
 document.addEventListener("mouseover", (e) => e.target.matches("#gallery video") && e.target.play());
 document.addEventListener("mouseout", (e) => e.target.matches("#gallery video") && e.target.pause());
 
+/* ---------- Установка приложения (PWA) ---------- */
+let installPrompt = null;
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  installPrompt = e;
+  $("#install").hidden = false;
+});
+$("#install").addEventListener("click", async () => {
+  if (!installPrompt) return;
+  installPrompt.prompt();
+  await installPrompt.userChoice;
+  installPrompt = null;
+  $("#install").hidden = true;
+});
+window.addEventListener("appinstalled", () => ($("#install").hidden = true));
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+}
+
 /* ---------- Старт ---------- */
 (async () => {
-  setMode(mode);
   await refreshMe();
   route();
   loadCatalog().catch(() => {});

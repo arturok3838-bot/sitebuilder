@@ -27,10 +27,15 @@ class LocalLLM:
         except requests.RequestException:
             return []
 
-    def model_for(self, mode: str, model: str | None = None) -> str:
+    def effort(self, effort: str) -> dict:
+        efforts = self.cfg["efforts"]
+        return efforts.get(effort, efforts["medium"])
+
+    def model_for(self, effort: str, model: str | None = None) -> str:
         if model:
             return model
-        return self.cfg["fast_model"] if mode == "fast" else self.cfg["model"]
+        use = self.effort(effort)["use"]
+        return self.cfg["model"] if use == "precise" else self.cfg["fast_model"]
 
     def num_ctx(self, context: str) -> int:
         # Без ZIP хватает короткого контекста; Ollama перезагружает модель при смене
@@ -52,11 +57,14 @@ class LocalLLM:
             run()
 
     def chat_stream(self, messages: list[dict], model: str | None = None, context: str = "",
-                    mode: str = "fast"):
+                    effort: str = "medium", explain: bool = False):
         system = self.cfg["system_prompt"]
+        if explain:
+            system += ("\n\nПользователь просит ПОДРОБНОЕ ОБЪЯСНЕНИЕ: разложи решение "
+                       "по шагам, поясни, почему так, и прокомментируй ключевые строки кода.")
         if context:
             system += "\n\nФайлы пользователя из ZIP-архива:\n" + context
-        model = self.model_for(mode, model)
+        model = self.model_for(effort, model)
         # Старые сообщения не отправляем — длинная история замедляет каждый ответ.
         messages = messages[-int(self.cfg["max_history"]):]
         payload = {
@@ -64,7 +72,8 @@ class LocalLLM:
             "messages": [{"role": "system", "content": system}, *messages],
             "stream": True,
             "keep_alive": self.cfg["keep_alive"],
-            "options": {"temperature": float(self.cfg["temperature"]), "num_ctx": self.num_ctx(context)},
+            "options": {"temperature": float(self.cfg["temperature"]), "num_ctx": self.num_ctx(context),
+                        "num_predict": int(self.effort(effort)["num_predict"])},
         }
         try:
             with self.http.post(f"{self.cfg['host']}/api/chat", json=payload, stream=True, timeout=600) as r:

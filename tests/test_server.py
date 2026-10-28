@@ -37,6 +37,8 @@ class FakeVideo:
 @pytest.fixture(autouse=True)
 def fresh(tmp_path):
     server.store = Store(tmp_path / "db.sqlite", server.PLANS)
+    server.rate_limiter.enabled = False
+    server._login_fails.clear()
     server._gens.update(image=FakeImage(), video=FakeVideo())
     yield
     for p in server.OUT.glob("test_*"):
@@ -102,7 +104,7 @@ def test_free_plan_limits():
     r = c.post("/api/image", json={"prompt": "кот", "width": 1024, "height": 1024})
     assert r.status_code == 403 and "768" in r.json()["detail"]
     assert c.post("/api/video", json={"prompt": "горы", "seconds": 5}).status_code == 403
-    assert c.post("/api/chat", json={"messages": [], "mode": "precise"}).status_code == 403
+    assert c.post("/api/chat", json={"messages": [], "effort": "high"}).status_code == 403
     assert c.post("/api/zip", files={"file": ("p.zip", b"x")}).status_code == 403
 
 
@@ -182,7 +184,7 @@ def test_zip_chat_refund_and_export():
 
     server.llm.cfg["host"] = "http://127.0.0.1:9"   # Ollama выключена
     before = c.get("/api/me").json()["total"]
-    r = c.post("/api/chat", json={"messages": [{"role": "user", "content": "hi"}], "mode": "precise"})
+    r = c.post("/api/chat", json={"messages": [{"role": "user", "content": "hi"}], "effort": "high"})
     assert "Ollama" in r.text
     assert c.get("/api/me").json()["total"] == before  # кредит за неотвеченное сообщение вернулся
 
