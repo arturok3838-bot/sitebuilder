@@ -245,29 +245,33 @@ function applyEffortLimits() {
   applyEngine();
 }
 
-// Выбор внешней нейросети. Внешние доступны только на платных тарифах.
+// Выбор движка. Бесплатные модели (free) доступны всем; платные — на платных тарифах.
 let engine = "local";
 try { engine = localStorage.getItem("engine") || "local"; } catch {}
+const engineAllowed = (id) => {
+  if (id === "local") return true;
+  const p = (status?.providers || []).find((x) => x.id === id);
+  return !!p && (p.free || me?.limits.external);
+};
 function applyEngine() {
-  if (!me) return;
+  if (!me || !status) return;
   const sel = $("#engine");
-  const external = engine !== "local";
-  if (external && !me.limits.external) {
+  if (!engineAllowed(engine)) {        // тариф сменился — тихо откатываем на локальную
     engine = "local";
     sel.value = "local";
   }
-  // Для внешней модели цена берётся из её пункта; уровень влияет только на длину.
-  const prov = (status?.providers || []).find((p) => p.id === engine);
+  const prov = (status.providers || []).find((p) => p.id === engine);
   if (prov) $("#chat-cost").textContent = `Стоимость сообщения: ${credits(prov.cost)} (${esc(prov.label)})`;
-  $("#efforts").classList.toggle("dim", external);
-  if (!me.limits.external) {
-    sel.title = "Внешние нейросети — в платных тарифах";
-  } else {
-    sel.title = "";
-  }
+  $("#efforts").classList.toggle("dim", engine !== "local");
 }
 $("#engine").addEventListener("change", (e) => {
-  engine = e.target.value;
+  const id = e.target.value;
+  if (!engineAllowed(id)) {
+    toast("Эта модель доступна в платных тарифах");
+    e.target.value = engine;
+    return;
+  }
+  engine = id;
   try { localStorage.setItem("engine", engine); } catch {}
   applyEngine();
   if (engine === "local") warmup();

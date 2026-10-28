@@ -72,7 +72,7 @@ class LocalLLM:
         out = []
         for p in self.cfg.get("providers", []):
             out.append({"id": p["id"], "label": p["label"], "cost_mult": p.get("cost_mult", 3),
-                        "enabled": bool(os.environ.get(p["api_key_env"]))})
+                        "free": bool(p.get("free")), "enabled": bool(os.environ.get(p["api_key_env"]))})
         return out
 
     def provider(self, pid: str) -> dict | None:
@@ -94,6 +94,8 @@ class LocalLLM:
             "max_tokens": int(self.effort(effort)["num_predict"]),
         }
         headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+        if provider.get("use_or_headers"):      # необязательные заголовки OpenRouter
+            headers.update(self.cfg.get("openrouter_headers", {}))
         url = provider["base_url"].rstrip("/") + "/chat/completions"
         t0 = time.time()
         tokens = 0

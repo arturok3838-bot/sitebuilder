@@ -46,10 +46,19 @@ llm:
     high:   {label: "🎯 Максимум", use: precise, num_predict: 16384, cost_mult: 4}
   # Внешние нейросети (работают по платному API-ключу из переменной окружения).
   # Модель включается в выборе, только если её ключ задан. У ChatGPT бесплатного API нет.
+  # Для OpenRouter рекомендуется передавать эти заголовки (необязательно).
+  openrouter_headers: {"HTTP-Referer": "https://arturok.ai", "X-Title": "ARTurokAI"}
   providers:
-    - {id: deepseek, label: "DeepSeek",         base_url: "https://api.deepseek.com/v1",  model: "deepseek-chat",     api_key_env: DEEPSEEK_API_KEY, cost_mult: 3}
-    - {id: kimi,     label: "Kimi (слабая)",    base_url: "https://api.moonshot.cn/v1",   model: "moonshot-v1-8k",    api_key_env: MOONSHOT_API_KEY, cost_mult: 3}
-    - {id: openai,   label: "ChatGPT",          base_url: "https://api.openai.com/v1",    model: "gpt-4o-mini",       api_key_env: OPENAI_API_KEY,   cost_mult: 4}
+    # --- БЕСПЛАТНЫЕ (доступны на бесплатном тарифе). Нужен один бесплатный ключ
+    #     OPENROUTER_API_KEY с openrouter.ai (без карты). id моделей :free иногда
+    #     меняются — «Авто» сам берёт доступную бесплатную; остальные можно править тут.
+    - {id: free-auto,     label: "Авто (бесплатно)",       base_url: "https://openrouter.ai/api/v1", model: "openrouter/free",          api_key_env: OPENROUTER_API_KEY, cost_mult: 1, free: true, use_or_headers: true}
+    - {id: free-qwen,     label: "Qwen Coder (бесплатно)", base_url: "https://openrouter.ai/api/v1", model: "qwen/qwen3-coder:free",    api_key_env: OPENROUTER_API_KEY, cost_mult: 1, free: true, use_or_headers: true}
+    - {id: free-deepseek, label: "DeepSeek (бесплатно)",   base_url: "https://openrouter.ai/api/v1", model: "deepseek/deepseek-r1:free", api_key_env: OPENROUTER_API_KEY, cost_mult: 1, free: true, use_or_headers: true}
+    # --- ПЛАТНЫЕ (дешёвые/сильные) — включим позже, на платных тарифах ---
+    - {id: deepseek, label: "DeepSeek (платно)", base_url: "https://api.deepseek.com/v1", model: "deepseek-chat",  api_key_env: DEEPSEEK_API_KEY, cost_mult: 3}
+    - {id: kimi,     label: "Kimi",              base_url: "https://api.moonshot.cn/v1",  model: "moonshot-v1-8k", api_key_env: MOONSHOT_API_KEY, cost_mult: 3}
+    - {id: openai,   label: "ChatGPT",           base_url: "https://api.openai.com/v1",   model: "gpt-4o-mini",    api_key_env: OPENAI_API_KEY,   cost_mult: 4}
   system_prompt: >
     Ты — ARTurokAI, личный ассистент-программист. Отвечай по-русски, быстро и
     понятно: сразу по делу, без вступлений и повторов вопроса. Короткие абзацы,

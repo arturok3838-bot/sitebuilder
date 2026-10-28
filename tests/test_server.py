@@ -274,3 +274,22 @@ def test_sheets_api():
     assert b.get("/api/sheets").json() == []
     a.delete(f"/api/sheets/{s['id']}")
     assert a.get("/api/sheets").json() == []
+
+
+def test_free_engine_on_free_plan(fake_openai, monkeypatch):
+    # Бесплатная модель (OpenRouter) должна работать на бесплатном тарифе.
+    monkeypatch.setenv("OPENROUTER_API_KEY", "free-key")
+    for p in server.llm.cfg["providers"]:
+        if p["id"] == "free-auto":
+            monkeypatch.setitem(p, "base_url", fake_openai)
+    c = client("freeuser")
+    provs = {p["id"]: p for p in c.get("/api/status").json()["providers"]}
+    assert provs["free-auto"]["free"] is True          # помечена как бесплатная
+    before = c.get("/api/me").json()["total"]
+    r = c.post("/api/chat", json={"messages": [{"role": "user", "content": "hi"}], "engine": "free-auto"})
+    assert "Привет" in r.text                            # ответ пришёл
+    assert c.get("/api/me").json()["total"] == before - server.COSTS["chat"]  # cost_mult 1
+    # платная модель на бесплатном тарифе — закрыта
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "x")
+    assert c.post("/api/chat", json={"messages": [{"role": "user", "content": "hi"}],
+                                     "engine": "deepseek"}).status_code == 403

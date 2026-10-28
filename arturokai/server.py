@@ -309,7 +309,8 @@ def plans():
 def status(u: dict = Depends(current_user)):
     efforts = {k: {"label": e["label"], "use": e["use"], "cost": COSTS["chat"] * e["cost_mult"]}
                for k, e in cfg["llm"]["efforts"].items()}
-    providers = [{"id": p["id"], "label": p["label"], "cost": COSTS["chat"] * p["cost_mult"]}
+    providers = [{"id": p["id"], "label": p["label"], "free": p["free"],
+                  "cost": COSTS["chat"] * p["cost_mult"]}
                  for p in llm.providers() if p["enabled"]]
     return {"models": llm.available_models() if u["is_admin"] else [],
             "default_model": cfg["llm"]["model"], "fast_model": cfg["llm"]["fast_model"],
@@ -431,9 +432,10 @@ def chat(req: ChatReq, u: dict = Depends(current_user)):
         provider = llm.provider(req.engine)
         enabled = {p["id"] for p in llm.providers() if p["enabled"]}
         if provider is None or req.engine not in enabled:
-            raise HTTPException(400, "Эта внешняя нейросеть недоступна")
-        if not plan_of(u)["external"]:
-            raise HTTPException(403, f"Внешние нейросети недоступны в тарифе «{plan_of(u)['name']}». "
+            raise HTTPException(400, "Эта нейросеть недоступна (не задан ключ или неверный id)")
+        # Бесплатные модели (free: true) доступны всем; платные — только на платных тарифах.
+        if not provider.get("free") and not plan_of(u)["external"]:
+            raise HTTPException(403, f"Эта модель недоступна в тарифе «{plan_of(u)['name']}». "
                                      "Подключите тариф Старт или Про.")
         cost = COSTS["chat"] * provider.get("cost_mult", 3)
         charge(u, cost, f"Код · {provider['label']}")
