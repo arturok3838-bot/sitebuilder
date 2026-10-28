@@ -1,6 +1,10 @@
 {
   "name": "ARTurokAI",
   "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "containerEnv": {
+    "ARTUROKAI_ADMIN_LOGIN": "admin",
+    "ARTUROKAI_ADMIN_PASSWORD": "test1234"
+  },
   "postCreateCommand": "pip install -r requirements-lite.txt",
   "postAttachCommand": "pgrep -f 'arturokai.server' >/dev/null || nohup python -m arturokai.server --host 0.0.0.0 --port 7860 > /tmp/arturokai.log 2>&1 &",
   "forwardPorts": [7860],
