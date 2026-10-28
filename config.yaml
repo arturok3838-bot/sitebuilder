@@ -49,3 +49,63 @@ llm:
 zip:
   max_total_mb: 500
   max_files: 5000
+
+# ---------- Аккаунты, тарифы и коды ----------
+billing:
+  db: data/arturokai.db
+  # Где покупать коды — показывается в личном кабинете у тарифов.
+  seller_contact: "Напишите в Telegram: @your_username"
+  # Сколько кредитов стоит каждое действие.
+  costs:
+    image: 2            # одно фото (по описанию или по примеру)
+    video_second: 3     # каждая секунда видео
+    chat: 1             # одно сообщение в разделе «Код»
+  plans:
+    free:
+      name: Бесплатный
+      price: "0 ₽"
+      credits: 30          # кредитов в день
+      reset_days: 1        # каждый день кредиты обновляются
+      priority: 2          # место в очереди: меньше — раньше
+      max_image_side: 768
+      max_images: 1
+      video_max_seconds: 0 # 0 — видео недоступно
+      chat_modes: [fast]
+      zip: false
+      includes:
+        - "Бесплатные нейросети: FLUX.1-schnell (фото) и Qwen2.5-Coder 7B (код)"
+        - "Фото по описанию и по примеру до 768 px"
+        - "Код в быстром режиме"
+        - "30 кредитов каждый день"
+    start:
+      name: Старт
+      price: "490 ₽ / 30 дней"
+      credits: 600
+      days: 30
+      priority: 1
+      max_image_side: 1536
+      max_images: 4
+      video_max_seconds: 30
+      chat_modes: [fast, precise]
+      zip: true
+      includes:
+        - "Фото до 1536 px, до 4 за раз"
+        - "Видео до 30 секунд"
+        - "Код: быстрый и точный режим, загрузка ZIP"
+        - "600 кредитов на 30 дней"
+    pro:
+      name: Про
+      price: "1490 ₽ / 30 дней"
+      credits: 2500
+      days: 30
+      priority: 0
+      max_image_side: 2048
+      max_images: 4
+      video_max_seconds: 120
+      chat_modes: [fast, precise]
+      zip: true
+      includes:
+        - "Фото до 2048 px"
+        - "Видео до 2 минут"
+        - "Приоритет в очереди"
+        - "2500 кредитов на 30 дней"

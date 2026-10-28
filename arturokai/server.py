@@ -1,10 +1,17 @@
 """Сайт ARTurokAI. Запуск: python -m arturokai.server  →  http://127.0.0.1:7860
 
+Доступ к генерации — по аккаунтам и кредитам. Кредиты дают тарифы: бесплатный
+(обновляется каждый день) и платные, которые активируются кодами. Коды создаёт
+администратор (в админ-панели сайта или командой python -m arturokai.admin).
+
 Генерация фото и видео идёт через очередь задач: видеокарта одна, поэтому задачи
-выполняются по очереди в фоновом потоке, а сайт опрашивает их прогресс.
+выполняются по очереди (платные тарифы — раньше) в фоновом потоке.
 """
 import argparse
+import csv
 import io
+import itertools
+import math
 import queue
 import shutil
 import threading
@@ -14,26 +21,34 @@ import zipfile
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel, Field
 
 from .config import ROOT, load_config
-from .llm import LocalLLM
+from .llm import STATS_MARK, LocalLLM
+from .store import NotEnoughCredits, Store, StoreError
 from .zip_tools import ZipError, build_context, code_blocks_to_zip, safe_extract, tree
 
 cfg = load_config()
 OUT, WS = cfg["output_dir"], cfg["workspace_dir"]
 WEB = ROOT / "web"
+BILL = cfg["billing"]
+PLANS, COSTS = BILL["plans"], BILL["costs"]
+COOKIE = "arturokai_session"
+
 llm = LocalLLM(cfg["llm"])
+store = Store(BILL["db"], PLANS)
 
 app = FastAPI(title="ARTurokAI")
 jobs: dict[str, dict] = {}
-job_queue: queue.Queue = queue.Queue()
-projects: dict[str, str] = {}   # id ZIP-проекта -> текстовый контекст для модели
+job_queue: queue.PriorityQueue = queue.PriorityQueue()
+_order = itertools.count()       # при равном приоритете — кто раньше пришёл
+projects: dict[str, tuple[int, str]] = {}   # id ZIP-проекта -> (владелец, контекст для модели)
 _gens: dict = {}
+_login_fails: dict[str, list[float]] = {}
 
 
 def generator(kind: str):
@@ -48,8 +63,40 @@ def generator(kind: str):
     return _gens[kind]
 
 
-def url(path: Path) -> str:
-    return f"/outputs/{path.name}"
+# ---------- пользователи ----------
+def current_user(request: Request) -> dict:
+    u = store.session_user(request.cookies.get(COOKIE))
+    if u is None:
+        raise HTTPException(401, "Войдите в аккаунт")
+    return u
+
+
+def admin_user(u: dict = Depends(current_user)) -> dict:
+    if not u["is_admin"]:
+        raise HTTPException(403, "Только для администратора")
+    return u
+
+
+def plan_of(u: dict) -> dict:
+    return PLANS.get(u["plan"], PLANS["free"])
+
+
+def charge(u: dict, cost: int, action: str):
+    try:
+        store.charge(u["id"], cost, action)
+    except NotEnoughCredits as e:
+        raise HTTPException(402, str(e))
+
+
+def upload_path(name: str, u: dict) -> Path:
+    if store.file_owner(name) != u["id"]:
+        raise HTTPException(400, "Файл не найден, загрузите его заново")
+    return WS / name
+
+
+# ---------- очередь задач ----------
+def file_url(path: Path) -> str:
+    return f"/files/{path.name}"
 
 
 def run_job(job: dict):
@@ -60,27 +107,28 @@ def run_job(job: dict):
 
     if job["kind"] == "image":
         job["desc"] = "Загрузка модели и генерация…"
+        ref = Image.open(WS / p["ref_image"]) if p.get("ref_image") else None
         paths = generator("image").generate(p["prompt"], p["negative"], p["width"], p["height"],
-                                            p["steps"], p["seed"], p["count"])
-        job["result"] = [url(x) for x in paths]
+                                            p["steps"], p["seed"], p["count"], ref, p["strength"])
     else:
-        start = None
-        if p.get("start_image"):
-            start = Image.open(WS / p["start_image"])
-        path = generator("video").generate(p["prompt"], p["seconds"], p["negative"], start,
-                                           p["seed"], p["steps"], progress)
-        job["result"] = [url(path)]
+        start = Image.open(WS / p["start_image"]) if p.get("start_image") else None
+        paths = [generator("video").generate(p["prompt"], p["seconds"], p["negative"], start,
+                                             p["seed"], p["steps"], progress)]
+    for path in paths:
+        store.add_file(path.name, job["user_id"], job["kind"], p["prompt"])
+    job["result"] = [file_url(x) for x in paths]
 
 
 def worker():
     while True:
-        job = job_queue.get()
+        *_, job = job_queue.get()
         job["status"], job["started"] = "running", time.time()
         try:
             run_job(job)
             job["status"], job["progress"] = "done", 1.0
-        except Exception as e:  # ошибку показываем на сайте, очередь продолжает работать
+        except Exception as e:  # ошибку показываем на сайте, кредиты возвращаем
             job["status"], job["error"] = "error", str(e)
+            store.refund(job["user_id"], job["cost"], "Возврат: ошибка генерации")
         job["finished"] = time.time()
 
 
@@ -89,16 +137,37 @@ if cfg["llm"].get("preload"):
     llm.warmup(cfg["llm"]["fast_model"])
 
 
-def submit(kind: str, params: dict) -> dict:
-    job = dict(id=uuid.uuid4().hex[:12], kind=kind, params=params, status="queued",
-               progress=0.0, desc="В очереди", result=[], error=None, created=time.time())
+def submit(u: dict, kind: str, params: dict, cost: int) -> dict:
+    charge(u, cost, "Фото" if kind == "image" else f"Видео {params['seconds']:g} сек")
+    job = dict(id=uuid.uuid4().hex[:12], kind=kind, params=params, user_id=u["id"], cost=cost,
+               status="queued", progress=0.0, desc="В очереди", result=[], error=None, created=time.time())
     jobs[job["id"]] = job
-    job_queue.put(job)
+    job_queue.put((plan_of(u).get("priority", 1), next(_order), job))
     return public(job)
 
 
 def public(job: dict) -> dict:
-    return {k: v for k, v in job.items() if k != "params"} | {"prompt": job["params"]["prompt"]}
+    hidden = ("params", "user_id")
+    return {k: v for k, v in job.items() if k not in hidden} | {"prompt": job["params"]["prompt"]}
+
+
+# ---------- модели запросов ----------
+class AuthReq(BaseModel):
+    login: str
+    password: str
+
+
+class CodeReq(BaseModel):
+    code: str
+
+
+class NewCodesReq(BaseModel):
+    kind: Literal["plan", "credits"]
+    plan: str | None = None
+    days: int | None = Field(None, ge=1, le=3650)
+    credits: int | None = Field(None, ge=1, le=10_000_000)
+    count: int = Field(1, ge=1, le=1000)
+    note: str = ""
 
 
 class ImageReq(BaseModel):
@@ -109,6 +178,8 @@ class ImageReq(BaseModel):
     steps: int = Field(cfg["image"]["steps"], ge=1, le=100)
     seed: int = -1
     count: int = Field(1, ge=1, le=4)
+    ref_image: str | None = None     # пример фото из /api/upload-image
+    strength: float = Field(0.6, ge=0.1, le=0.95)
 
 
 class VideoReq(BaseModel):
@@ -117,12 +188,12 @@ class VideoReq(BaseModel):
     seconds: float = Field(5, ge=1, le=cfg["video"]["max_seconds"])
     steps: int = Field(cfg["video"]["steps"], ge=5, le=100)
     seed: int = -1
-    start_image: str | None = None   # имя файла, полученное от /api/upload-image
+    start_image: str | None = None
 
 
 class ChatReq(BaseModel):
     messages: list[dict]
-    model: str | None = None          # явный выбор модели; иначе — по режиму
+    model: str | None = None          # явный выбор модели — только для администратора
     mode: Literal["fast", "precise"] = "fast"
     project_id: str | None = None
 
@@ -137,58 +208,151 @@ class ExportReq(BaseModel):
     text: str
 
 
+# ---------- аккаунт ----------
+def start_session(response: Response, u: dict) -> dict:
+    response.set_cookie(COOKIE, store.new_session(u["id"]), max_age=30 * 86400,
+                        httponly=True, samesite="lax")
+    return store.summary(u)
+
+
+@app.post("/api/register")
+def register(req: AuthReq, response: Response):
+    try:
+        u = store.create_user(req.login, req.password)
+    except StoreError as e:
+        raise HTTPException(400, str(e))
+    return start_session(response, u)
+
+
+@app.post("/api/login")
+def login(req: AuthReq, request: Request, response: Response):
+    ip = request.client.host if request.client else "?"
+    now = time.time()
+    fails = [t for t in _login_fails.get(ip, []) if now - t < 600]
+    if len(fails) >= 10:
+        raise HTTPException(429, "Слишком много попыток. Подождите 10 минут.")
+    u = store.authenticate(req.login, req.password)
+    if u is None:
+        _login_fails[ip] = fails + [now]
+        raise HTTPException(400, "Неверный логин или пароль")
+    _login_fails.pop(ip, None)
+    return start_session(response, u)
+
+
+@app.post("/api/logout")
+def logout(request: Request, response: Response):
+    if request.cookies.get(COOKIE):
+        store.drop_session(request.cookies[COOKIE])
+    response.delete_cookie(COOKIE)
+    return {"ok": True}
+
+
+@app.get("/api/me")
+def me(u: dict = Depends(current_user)):
+    return store.summary(u) | {"usage": store.usage(u["id"])}
+
+
+@app.post("/api/redeem")
+def redeem(req: CodeReq, u: dict = Depends(current_user)):
+    try:
+        message = store.redeem(u["id"], req.code)
+    except StoreError as e:
+        raise HTTPException(400, str(e))
+    return {"message": message, "me": store.summary(store.user(u["id"]))}
+
+
+@app.get("/api/plans")
+def plans():
+    return {"plans": [{"id": k, "name": p["name"], "price": p["price"], "includes": p["includes"]}
+                      for k, p in PLANS.items()],
+            "contact": BILL["seller_contact"], "costs": COSTS}
+
+
 @app.get("/api/status")
-def status():
-    return {"models": llm.available_models(), "default_model": cfg["llm"]["model"],
-            "fast_model": cfg["llm"]["fast_model"],
+def status(u: dict = Depends(current_user)):
+    return {"models": llm.available_models() if u["is_admin"] else [],
+            "default_model": cfg["llm"]["model"], "fast_model": cfg["llm"]["fast_model"],
             "image": cfg["image"], "video": cfg["video"], "queue": job_queue.qsize()}
 
 
-@app.post("/api/image")
-def make_image(req: ImageReq):
-    return submit("image", req.model_dump())
-
-
-@app.post("/api/video")
-def make_video(req: VideoReq):
-    if req.start_image and not (WS / req.start_image).is_file():
-        raise HTTPException(400, "Стартовый кадр не найден, загрузите его заново")
-    return submit("video", req.model_dump())
-
-
+# ---------- генерация ----------
 @app.post("/api/upload-image")
-async def upload_image(file: UploadFile = File(...)):
+async def upload_image(file: UploadFile = File(...), u: dict = Depends(current_user)):
     try:
         img = Image.open(io.BytesIO(await file.read())).convert("RGB")
     except Exception:
         raise HTTPException(400, "Это не изображение")
-    name = f"start_{uuid.uuid4().hex[:8]}.png"
+    name = f"upload_{uuid.uuid4().hex[:12]}.png"
     img.save(WS / name)
+    store.add_file(name, u["id"], "upload")
     return {"name": name}
 
 
+@app.post("/api/image")
+def make_image(req: ImageReq, u: dict = Depends(current_user)):
+    plan = plan_of(u)
+    side = plan["max_image_side"]
+    if max(req.width, req.height) > side:
+        raise HTTPException(403, f"Ваш тариф «{plan['name']}»: фото до {side} px")
+    if req.count > plan["max_images"]:
+        raise HTTPException(403, f"Ваш тариф «{plan['name']}»: до {plan['max_images']} фото за раз")
+    if req.ref_image:
+        upload_path(req.ref_image, u)
+    return submit(u, "image", req.model_dump(), COSTS["image"] * req.count)
+
+
+@app.post("/api/video")
+def make_video(req: VideoReq, u: dict = Depends(current_user)):
+    plan = plan_of(u)
+    limit = plan["video_max_seconds"]
+    if not limit:
+        raise HTTPException(403, f"Видео недоступно в тарифе «{plan['name']}». Активируйте код в кабинете.")
+    if req.seconds > limit:
+        raise HTTPException(403, f"Ваш тариф «{plan['name']}»: видео до {limit} сек")
+    if req.start_image:
+        upload_path(req.start_image, u)
+    return submit(u, "video", req.model_dump(), COSTS["video_second"] * math.ceil(req.seconds))
+
+
 @app.get("/api/jobs")
-def list_jobs():
-    return sorted((public(j) for j in jobs.values()), key=lambda j: -j["created"])
+def list_jobs(u: dict = Depends(current_user)):
+    mine = (public(j) for j in jobs.values() if j["user_id"] == u["id"])
+    return sorted(mine, key=lambda j: -j["created"])
 
 
 @app.get("/api/jobs/{job_id}")
-def get_job(job_id: str):
-    if job_id not in jobs:
+def get_job(job_id: str, u: dict = Depends(current_user)):
+    job = jobs.get(job_id)
+    if job is None or job["user_id"] != u["id"]:
         raise HTTPException(404, "Задача не найдена")
-    return public(jobs[job_id])
+    return public(job)
 
 
 @app.get("/api/gallery")
-def gallery():
-    files = [p for p in OUT.iterdir() if p.suffix in (".png", ".mp4")]
-    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return [{"url": url(p), "type": "video" if p.suffix == ".mp4" else "image"} for p in files[:200]]
+def gallery(u: dict = Depends(current_user)):
+    return [{"url": f"/files/{f['name']}", "type": f["kind"], "prompt": f["prompt"]}
+            for f in store.files(u["id"]) if (OUT / f["name"]).is_file()]
+
+
+@app.get("/files/{name}")
+def get_file(name: str, u: dict = Depends(current_user)):
+    path = OUT / Path(name).name
+    if store.file_owner(path.name) != u["id"] or not path.is_file():
+        raise HTTPException(404, "Файл не найден")
+    return FileResponse(path)
+
+
+# ---------- код и ZIP ----------
+def project_context(project_id: str | None, u: dict) -> str:
+    owner, context = projects.get(project_id or "", (None, ""))
+    return context if owner == u["id"] else ""
 
 
 @app.post("/api/zip")
-async def upload_zip(file: UploadFile = File(...)):
-    pid = uuid.uuid4().hex[:8]
+async def upload_zip(file: UploadFile = File(...), u: dict = Depends(current_user)):
+    if not plan_of(u)["zip"]:
+        raise HTTPException(403, f"Загрузка ZIP недоступна в тарифе «{plan_of(u)['name']}»")
+    pid = uuid.uuid4().hex[:12]
     tmp = WS / f"upload_{pid}.zip"
     with open(tmp, "wb") as f:
         shutil.copyfileobj(file.file, f)
@@ -200,31 +364,48 @@ async def upload_zip(file: UploadFile = File(...)):
         raise HTTPException(400, str(e))
     finally:
         tmp.unlink(missing_ok=True)
-    projects[pid] = build_context(root, cfg["llm"]["context_chars"])
+    projects[pid] = (u["id"], build_context(root, cfg["llm"]["context_chars"]))
     return {"project_id": pid, "name": file.filename, "tree": tree(root)}
 
 
+def chat_model(req, u: dict) -> tuple[str, str | None]:
+    plan = plan_of(u)
+    if req.mode not in plan["chat_modes"]:
+        raise HTTPException(403, f"Режим «Точно» недоступен в тарифе «{plan['name']}»")
+    return req.mode, (req.model if u["is_admin"] else None)
+
+
 @app.post("/api/chat")
-def chat(req: ChatReq):
-    context = projects.get(req.project_id or "", "")
+def chat(req: ChatReq, u: dict = Depends(current_user)):
+    mode, model = chat_model(req, u)
+    charge(u, COSTS["chat"], "Сообщение в «Код»")
     msgs = [{"role": m["role"], "content": m["content"]} for m in req.messages
             if m.get("role") in ("user", "assistant")]
-    stream = llm.chat_stream(msgs, req.model, context, req.mode)
+
+    def stream():
+        finished = False
+        for piece in llm.chat_stream(msgs, model, project_context(req.project_id, u), mode):
+            finished = finished or piece.startswith(STATS_MARK)
+            yield piece
+        if not finished:  # модель не ответила (Ollama выключена и т. п.) — кредит возвращаем
+            store.refund(u["id"], COSTS["chat"], "Возврат: модель не ответила")
+
     # X-Accel-Buffering отключает буферизацию в прокси — текст идёт на сайт без задержек.
-    return StreamingResponse(stream, media_type="text/plain; charset=utf-8",
+    return StreamingResponse(stream(), media_type="text/plain; charset=utf-8",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.post("/api/warmup")
-def warmup(req: WarmupReq):
+def warmup(req: WarmupReq, u: dict = Depends(current_user)):
     """Сайт вызывает это при открытии раздела «Код» и смене режима — модель грузится заранее."""
-    model = llm.model_for(req.mode, req.model)
-    llm.warmup(model, projects.get(req.project_id or "", ""))
+    mode, model = chat_model(req, u)
+    model = llm.model_for(mode, model)
+    llm.warmup(model, project_context(req.project_id, u))
     return {"model": model}
 
 
 @app.post("/api/export")
-def export(req: ExportReq):
+def export(req: ExportReq, u: dict = Depends(current_user)):
     data = code_blocks_to_zip(req.text)
     if not data:
         raise HTTPException(400, "В ответах нет блоков кода")
@@ -232,7 +413,43 @@ def export(req: ExportReq):
                     headers={"Content-Disposition": 'attachment; filename="arturokai_code.zip"'})
 
 
-app.mount("/outputs", StaticFiles(directory=OUT), name="outputs")
+# ---------- администратор ----------
+@app.post("/api/admin/codes")
+def admin_new_codes(req: NewCodesReq, _: dict = Depends(admin_user)):
+    try:
+        codes = store.create_codes(req.kind, req.count, req.plan, req.days, req.credits, req.note)
+    except StoreError as e:
+        raise HTTPException(400, str(e))
+    return {"codes": codes}
+
+
+@app.get("/api/admin/codes")
+def admin_codes(_: dict = Depends(admin_user)):
+    return store.list_codes()
+
+
+@app.get("/api/admin/codes.csv")
+def admin_codes_csv(only_free: bool = False, _: dict = Depends(admin_user)):
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=";")
+    w.writerow(["Код", "Тип", "Тариф", "Дней", "Кредитов", "Заметка", "Активировал"])
+    for c in store.list_codes(limit=100_000):
+        if only_free and c["used_by"]:
+            continue
+        kind = "Подписка" if c["kind"] == "plan" else "Пакет генераций"
+        plan = PLANS[c["plan"]]["name"] if c["plan"] in PLANS else ""
+        w.writerow([c["code"], kind, plan, c["days"] or "", c["credits"], c["note"], c["used_login"] or ""])
+    # BOM — чтобы Excel правильно показал русские буквы.
+    return Response("﻿" + buf.getvalue(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="arturokai_codes.csv"'})
+
+
+@app.get("/api/admin/users")
+def admin_users(_: dict = Depends(admin_user)):
+    return store.list_users()
+
+
+# ---------- страницы ----------
 app.mount("/static", StaticFiles(directory=WEB), name="static")
 
 

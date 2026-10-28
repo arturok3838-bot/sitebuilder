@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ARTurokAI</title>
-  <meta name="description" content="Личная локальная нейросеть: фото, видео до 2 минут и код.">
+  <meta name="description" content="Нейросеть ARTurokAI: фото по описанию и по примеру, видео до 2 минут и код.">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%237c5cff'/><text x='16' y='22' font-size='16' text-anchor='middle' fill='white' font-family='Arial' font-weight='bold'>A</text></svg>">
   <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -17,29 +17,49 @@
       <a href="#video">Видео</a>
       <a href="#code">Код</a>
       <a href="#gallery">Галерея</a>
+      <a href="#cabinet">Кабинет</a>
+      <a href="#admin" id="nav-admin" hidden>Админ</a>
     </nav>
-    <span id="queue" class="pill" title="Задач в очереди">⏳ 0</span>
+    <span id="queue" class="pill" title="Ваших задач в работе" hidden>⏳ 0</span>
+    <a id="balance" class="pill balance" href="#cabinet" title="Сколько осталось кредитов тарифа" hidden></a>
+    <a id="login-btn" class="btn primary small" href="#auth">Войти</a>
   </header>
 
   <main>
     <!-- Главная -->
     <section id="view-home" class="view">
       <div class="hero">
-        <p class="eyebrow">Работает на вашем компьютере</p>
-        <h1>Ваша личная нейросеть<br><span class="grad">ARTurokAI</span></h1>
-        <p class="lead">Фото, видео до 2 минут и код — без облака, без подписок и без интернета после установки моделей.</p>
+        <p class="eyebrow">Фото · Видео · Код</p>
+        <h1>Нейросеть<br><span class="grad">ARTurokAI</span></h1>
+        <p class="lead">Фото по описанию и по вашему примеру, видео до 2 минут и программный код. Начните бесплатно.</p>
         <div class="cta">
           <a class="btn primary" href="#image">Создать фото</a>
-          <a class="btn" href="#video">Создать видео</a>
+          <button class="btn" type="button" id="to-plans">Тарифы</button>
         </div>
       </div>
       <div class="cards">
-        <a class="card" href="#image"><div class="ico">🖼</div><h3>Фото</h3><p>Изображения по описанию в высоком разрешении. Модель FLUX или SDXL.</p></a>
+        <a class="card" href="#image"><div class="ico">🖼</div><h3>Фото</h3><p>По описанию или по вашему примеру фото — смените стиль, фон, детали.</p></a>
         <a class="card" href="#video"><div class="ico">🎬</div><h3>Видео до 2 минут</h3><p>По тексту или от вашего кадра. Длинные ролики собираются плавно, без склеек.</p></a>
-        <a class="card" href="#code"><div class="ico">💻</div><h3>Код</h3><p>Пишет и исправляет программы. Скачивайте результат одним ZIP-архивом.</p></a>
+        <a class="card" href="#code"><div class="ico">💻</div><h3>Код</h3><p>Пишет и исправляет программы. Результат скачивается одним ZIP-архивом.</p></a>
         <a class="card" href="#code"><div class="ico">📦</div><h3>ZIP-архивы</h3><p>Загрузите свой проект в ZIP — нейросеть прочитает все файлы.</p></a>
       </div>
-      <div class="status-box" id="status-box">Проверка моделей…</div>
+      <h2 class="section-title" id="plans">Тарифы</h2>
+      <div class="plans" id="plans-home"></div>
+      <p class="hint center contact"></p>
+    </section>
+
+    <!-- Вход и регистрация -->
+    <section id="view-auth" class="view" hidden>
+      <form id="auth-form" class="panel auth">
+        <div class="tabs">
+          <button type="button" data-auth="login" class="on">Вход</button>
+          <button type="button" data-auth="register">Регистрация</button>
+        </div>
+        <label>Логин<input name="login" autocomplete="username" required minlength="3" maxlength="32"></label>
+        <label>Пароль<input name="password" type="password" autocomplete="current-password" required minlength="6"></label>
+        <button class="btn primary wide" id="auth-submit">Войти</button>
+        <p class="hint" id="auth-hint">Нет аккаунта? Нажмите «Регистрация» — бесплатный тариф подключится сразу.</p>
+      </form>
     </section>
 
     <!-- Фото -->
@@ -47,17 +67,32 @@
       <div class="studio">
         <form id="image-form" class="panel">
           <h2>🖼 Создать фото</h2>
-          <label>Описание<textarea name="prompt" rows="5" required placeholder="Неоновый город ночью под дождём, кинематографично, 8k"></textarea></label>
+          <div class="tabs">
+            <button type="button" data-imode="text" class="on">По описанию</button>
+            <button type="button" data-imode="ref">По примеру фото</button>
+          </div>
+          <div id="ref-box" hidden>
+            <label class="drop" id="ref-drop">
+              <input type="file" accept="image/*" id="ref-file" hidden>
+              <span id="ref-text">Загрузите пример фото — нажмите или перетащите</span>
+              <img id="ref-preview" alt="" hidden>
+            </label>
+            <label>Насколько менять пример: <b id="strength-label">60%</b>
+              <input name="strength" type="range" min="10" max="95" value="60"></label>
+            <p class="hint">Меньше — результат ближе к примеру, больше — от примера остаётся только общая идея.</p>
+          </div>
+          <label>Описание<textarea name="prompt" rows="4" required placeholder="Неоновый город ночью под дождём, кинематографично"></textarea></label>
           <label>Чего не должно быть <small>(для SDXL)</small><input name="negative" placeholder="размытость, текст"></label>
           <div class="row">
-            <label>Ширина<input name="width" type="number" min="256" max="2048" step="64"></label>
-            <label>Высота<input name="height" type="number" min="256" max="2048" step="64"></label>
+            <label>Ширина<input name="width" type="number" min="256" step="64" value="768"></label>
+            <label>Высота<input name="height" type="number" min="256" step="64" value="768"></label>
           </div>
           <div class="row">
-            <label>Шаги<input name="steps" type="number" min="1" max="100"></label>
+            <label>Шаги<input name="steps" type="number" min="1" max="100" value="4"></label>
             <label>Количество<input name="count" type="number" min="1" max="4" value="1"></label>
             <label>Seed<input name="seed" type="number" value="-1"></label>
           </div>
+          <p class="hint" id="image-cost"></p>
           <button class="btn primary wide">Создать</button>
         </form>
         <div class="panel result">
@@ -69,6 +104,7 @@
 
     <!-- Видео -->
     <section id="view-video" class="view" hidden>
+      <div class="locked" id="video-locked" hidden></div>
       <div class="studio">
         <form id="video-form" class="panel">
           <h2>🎬 Создать видео</h2>
@@ -82,7 +118,7 @@
             <img id="start-preview" alt="" hidden>
           </label>
           <div class="row">
-            <label>Шаги<input name="steps" type="number" min="5" max="100"></label>
+            <label>Шаги<input name="steps" type="number" min="5" max="100" value="40"></label>
             <label>Seed<input name="seed" type="number" value="-1"></label>
           </div>
           <p class="hint" id="video-hint"></p>
@@ -109,7 +145,8 @@
             <button type="button" data-mode="fast"><b>⚡ Быстро</b><small id="mode-fast-model"></small></button>
             <button type="button" data-mode="precise"><b>🎯 Точно</b><small id="mode-precise-model"></small></button>
           </div>
-          <label>Модель<select id="model"><option value="">Авто — по режиму</option></select></label>
+          <label id="model-box" hidden>Модель (админ)<select id="model"><option value="">Авто — по режиму</option></select></label>
+          <p class="hint" id="chat-cost"></p>
           <button class="btn wide" id="export">⬇ Скачать код как ZIP</button>
           <button class="btn ghost wide" id="clear">Очистить чат</button>
         </aside>
@@ -125,8 +162,73 @@
 
     <!-- Галерея -->
     <section id="view-gallery" class="view" hidden>
-      <h2 class="page-title">Галерея</h2>
+      <h2 class="page-title">Мои работы</h2>
       <div class="grid big" id="gallery"></div>
+    </section>
+
+    <!-- Личный кабинет -->
+    <section id="view-cabinet" class="view" hidden>
+      <h2 class="page-title">Личный кабинет</h2>
+      <div class="cabinet">
+        <div class="panel balance-card">
+          <div class="ring" id="ring"><span id="ring-pct">0%</span><small>осталось</small></div>
+          <div>
+            <p class="hint">Аккаунт: <b id="cab-login"></b></p>
+            <h3 id="cab-plan"></h3>
+            <p id="cab-credits"></p>
+            <p class="hint" id="cab-when"></p>
+            <button class="btn ghost small" id="logout" type="button">Выйти</button>
+          </div>
+        </div>
+        <form class="panel" id="redeem-form">
+          <h3>Активировать код</h3>
+          <p class="hint">Код подписки включает тариф. Код пакета генераций добавляет кредиты, которые не сгорают.</p>
+          <input name="code" placeholder="ARTK-XXXX-XXXX-XXXX" required autocomplete="off" spellcheck="false">
+          <button class="btn primary wide">Активировать</button>
+          <p class="hint" id="cab-costs"></p>
+        </form>
+      </div>
+      <h2 class="section-title">Тарифы</h2>
+      <div class="plans" id="plans-cabinet"></div>
+      <p class="hint center contact"></p>
+      <h2 class="section-title">История</h2>
+      <div class="panel scroll"><table class="table" id="usage"></table></div>
+    </section>
+
+    <!-- Админ-панель -->
+    <section id="view-admin" class="view" hidden>
+      <h2 class="page-title">Админ-панель</h2>
+      <div class="cabinet">
+        <form class="panel" id="codes-form">
+          <h3>Создать коды для продажи</h3>
+          <div class="tabs">
+            <button type="button" data-ckind="plan" class="on">Подписка</button>
+            <button type="button" data-ckind="credits">Пакет генераций</button>
+          </div>
+          <div id="ck-plan">
+            <label>Тариф<select name="plan" id="code-plan"></select></label>
+            <label>Дней <small>(пусто — как в тарифе)</small><input name="days" type="number" min="1"></label>
+          </div>
+          <label>Кредитов <small id="ck-credits-hint">(пусто — как в тарифе)</small><input name="credits" type="number" min="1"></label>
+          <div class="row">
+            <label>Сколько кодов<input name="count" type="number" min="1" max="1000" value="10"></label>
+            <label>Заметка<input name="note" placeholder="например: Авито"></label>
+          </div>
+          <button class="btn primary wide">Создать</button>
+        </form>
+        <div class="panel">
+          <h3>Новые коды</h3>
+          <textarea id="new-codes" rows="9" readonly placeholder="Здесь появятся созданные коды"></textarea>
+          <div class="row buttons">
+            <button class="btn wide" id="copy-codes" type="button">Копировать</button>
+            <a class="btn wide" href="/api/admin/codes.csv?only_free=1">⬇ Свободные (CSV)</a>
+          </div>
+        </div>
+      </div>
+      <h2 class="section-title">Коды</h2>
+      <div class="panel scroll"><table class="table" id="codes-table"></table></div>
+      <h2 class="section-title">Пользователи</h2>
+      <div class="panel scroll"><table class="table" id="users-table"></table></div>
     </section>
   </main>
 

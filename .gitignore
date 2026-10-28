@@ -5,3 +5,4 @@ outputs/
 workspace/
 models/
 *.whl
+data/

@@ -13,4 +13,7 @@ def load_config(path: str | Path | None = None) -> dict:
         p = Path(cfg[key])
         cfg[key] = p if p.is_absolute() else ROOT / p
         cfg[key].mkdir(parents=True, exist_ok=True)
+    db = Path(cfg["billing"]["db"])
+    cfg["billing"]["db"] = db if db.is_absolute() else ROOT / db
+    cfg["billing"]["db"].parent.mkdir(parents=True, exist_ok=True)
     return cfg
