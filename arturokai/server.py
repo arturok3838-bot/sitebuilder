@@ -12,6 +12,7 @@ import time
 import uuid
 import zipfile
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -84,6 +85,8 @@ def worker():
 
 
 threading.Thread(target=worker, daemon=True).start()
+if cfg["llm"].get("preload"):
+    llm.warmup(cfg["llm"]["fast_model"])
 
 
 def submit(kind: str, params: dict) -> dict:
@@ -119,7 +122,14 @@ class VideoReq(BaseModel):
 
 class ChatReq(BaseModel):
     messages: list[dict]
+    model: str | None = None          # явный выбор модели; иначе — по режиму
+    mode: Literal["fast", "precise"] = "fast"
+    project_id: str | None = None
+
+
+class WarmupReq(BaseModel):
     model: str | None = None
+    mode: Literal["fast", "precise"] = "fast"
     project_id: str | None = None
 
 
@@ -130,6 +140,7 @@ class ExportReq(BaseModel):
 @app.get("/api/status")
 def status():
     return {"models": llm.available_models(), "default_model": cfg["llm"]["model"],
+            "fast_model": cfg["llm"]["fast_model"],
             "image": cfg["image"], "video": cfg["video"], "queue": job_queue.qsize()}
 
 
@@ -198,7 +209,18 @@ def chat(req: ChatReq):
     context = projects.get(req.project_id or "", "")
     msgs = [{"role": m["role"], "content": m["content"]} for m in req.messages
             if m.get("role") in ("user", "assistant")]
-    return StreamingResponse(llm.chat_stream(msgs, req.model, context), media_type="text/plain; charset=utf-8")
+    stream = llm.chat_stream(msgs, req.model, context, req.mode)
+    # X-Accel-Buffering отключает буферизацию в прокси — текст идёт на сайт без задержек.
+    return StreamingResponse(stream, media_type="text/plain; charset=utf-8",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/warmup")
+def warmup(req: WarmupReq):
+    """Сайт вызывает это при открытии раздела «Код» и смене режима — модель грузится заранее."""
+    model = llm.model_for(req.mode, req.model)
+    llm.warmup(model, projects.get(req.project_id or "", ""))
+    return {"model": model}
 
 
 @app.post("/api/export")

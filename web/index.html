@@ -105,14 +105,18 @@
             <span id="zip-text">Перетащите ZIP проекта или нажмите</span>
           </label>
           <pre class="tree" id="zip-tree" hidden></pre>
-          <label>Модель<select id="model"></select></label>
+          <div class="modes">
+            <button type="button" data-mode="fast"><b>⚡ Быстро</b><small id="mode-fast-model"></small></button>
+            <button type="button" data-mode="precise"><b>🎯 Точно</b><small id="mode-precise-model"></small></button>
+          </div>
+          <label>Модель<select id="model"><option value="">Авто — по режиму</option></select></label>
           <button class="btn wide" id="export">⬇ Скачать код как ZIP</button>
           <button class="btn ghost wide" id="clear">Очистить чат</button>
         </aside>
         <div class="panel chat">
           <div id="messages"><p class="empty">Опишите задачу: «Напиши сайт-визитку», «Найди ошибку в моём проекте»…</p></div>
           <form id="chat-form">
-            <textarea id="chat-input" rows="2" placeholder="Сообщение… (Enter — отправить, Shift+Enter — новая строка)"></textarea>
+            <textarea id="chat-input" rows="2" placeholder="Напишите задачу…" title="Enter — отправить, Shift+Enter — новая строка"></textarea>
             <button class="btn primary">➤</button>
           </form>
         </div>

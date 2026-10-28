@@ -60,10 +60,10 @@ async function loadStatus() {
   v.steps.value = status.video.steps;
   v.seconds.max = status.video.max_seconds;
 
-  const sel = $("#model");
-  const models = status.models.length ? status.models : [status.default_model];
-  if (!models.includes(status.default_model)) models.unshift(status.default_model);
-  sel.innerHTML = models.map((m) => `<option ${m === status.default_model ? "selected" : ""}>${esc(m)}</option>`).join("");
+  $("#mode-fast-model").textContent = status.fast_model;
+  $("#mode-precise-model").textContent = status.default_model;
+  $("#model").innerHTML =
+    `<option value="">Авто — по режиму</option>` + status.models.map((m) => `<option>${esc(m)}</option>`).join("");
   updateVideoHint();
 }
 
@@ -187,6 +187,7 @@ async function uploadZip(file) {
   try {
     const d = await (await api("/api/zip", { method: "POST", body: fd })).json();
     projectId = d.project_id;
+    warmup();
     $("#zip-text").textContent = "📦 " + d.name + " — загружен";
     $("#zip-tree").textContent = d.tree;
     $("#zip-tree").hidden = false;
@@ -219,16 +220,36 @@ function renderMarkdown(text) {
   return html;
 }
 
+const msgHTML = (m) =>
+  m.role === "user"
+    ? esc(m.content)
+    : renderMarkdown(m.content || "…") + (m.stats ? `<div class="speed">${esc(m.stats)}</div>` : "");
+
 function renderChat() {
   const box = $("#messages");
   if (!history.length) {
     box.innerHTML = `<p class="empty">Опишите задачу: «Напиши сайт-визитку», «Найди ошибку в моём проекте»…</p>`;
     return;
   }
-  box.innerHTML = history
-    .map((m) => `<div class="msg ${m.role}">${m.role === "user" ? esc(m.content) : renderMarkdown(m.content || "…")}</div>`)
-    .join("");
+  box.innerHTML = history.map((m) => `<div class="msg ${m.role}">${msgHTML(m)}</div>`).join("");
   box.scrollTop = box.scrollHeight;
+}
+
+// Во время ответа перерисовываем только последнее сообщение и не чаще одного раза
+// за кадр экрана — так длинный чат не тормозит, а текст появляется плавно.
+let drawPending = false;
+function drawLast() {
+  if (drawPending) return;
+  drawPending = true;
+  requestAnimationFrame(() => {
+    drawPending = false;
+    const box = $("#messages");
+    const el = box.lastElementChild;
+    if (!el) return;
+    const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+    el.innerHTML = msgHTML(history[history.length - 1]);
+    if (stick) box.scrollTop = box.scrollHeight;
+  });
 }
 
 $("#messages").addEventListener("click", (e) => {
@@ -236,6 +257,25 @@ $("#messages").addEventListener("click", (e) => {
   navigator.clipboard.writeText(e.target.parentElement.querySelector("code").textContent);
   e.target.textContent = "Скопировано";
 });
+
+/* Режим: ⚡ быстро (лёгкая модель) или 🎯 точно (большая модель) */
+let mode = "fast";
+try { mode = localStorage.getItem("mode") || "fast"; } catch {}
+function setMode(m) {
+  mode = m;
+  try { localStorage.setItem("mode", m); } catch {}
+  document.querySelectorAll("[data-mode]").forEach((b) => b.classList.toggle("on", b.dataset.mode === m));
+  warmup();
+}
+document.querySelectorAll("[data-mode]").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+
+// Просим сервер заранее загрузить модель, чтобы ответ начался без ожидания.
+function warmup() {
+  if (location.hash !== "#code") return;
+  postJSON("/api/warmup", { mode, model: $("#model").value || null, project_id: projectId }).catch(() => {});
+}
+$("#model").addEventListener("change", warmup);
+window.addEventListener("hashchange", warmup);
 
 let sending = false;
 async function sendChat() {
@@ -246,9 +286,12 @@ async function sendChat() {
   input.value = "";
   history.push({ role: "user", content: text });
   const answer = { role: "assistant", content: "" };
-  const req = { messages: history.slice(), model: $("#model").value, project_id: projectId };
+  const req = { messages: history.slice(), mode, model: $("#model").value || null, project_id: projectId };
   history.push(answer);
   renderChat();
+  const t0 = performance.now();
+  let firstWord = 0;
+  let tail = "";
   try {
     const r = await postJSON("/api/chat", req);
     const reader = r.body.getReader();
@@ -256,14 +299,24 @@ async function sendChat() {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      answer.content += dec.decode(value, { stream: true });
-      renderChat();
+      tail += dec.decode(value, { stream: true });
+      const cut = tail.indexOf("\u0000");  // дальше — статистика скорости от сервера
+      answer.content = cut < 0 ? tail : tail.slice(0, cut);
+      if (!firstWord && answer.content.trim()) firstWord = (performance.now() - t0) / 1000;
+      drawLast();
+    }
+    const cut = tail.indexOf("\u0000");
+    if (cut >= 0) {
+      const st = JSON.parse(tail.slice(cut + 1));
+      answer.stats =
+        `⚡ ${st.tok_per_s} ток/с · первые слова через ${firstWord.toFixed(1)} с · всего ${st.total_s} с · ${st.model}` +
+        (st.load_s > 1 ? ` · загрузка модели ${st.load_s} с` : "");
     }
   } catch (err) {
     answer.content += "\n⚠️ " + err.message;
-    renderChat();
   } finally {
     sending = false;
+    drawLast();
   }
 }
 $("#chat-form").addEventListener("submit", (e) => (e.preventDefault(), sendChat()));
@@ -315,3 +368,4 @@ document.addEventListener("mouseout", (e) => e.target.matches("#gallery video") 
 
 route();
 loadStatus();
+setMode(mode);

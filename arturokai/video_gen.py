@@ -46,7 +46,7 @@ class VideoGenerator:
         if self.t2v is None:
             _, dtype = pick_device()
             pipe = WanPipeline.from_pretrained(self.cfg["t2v_model"], torch_dtype=dtype)
-            self.t2v = place(pipe, self.cfg.get("cpu_offload", True))
+            self.t2v = place(pipe, self.cfg.get("cpu_offload", "auto"))
         return self.t2v
 
     def _load_i2v(self):
@@ -57,7 +57,7 @@ class VideoGenerator:
                 pipe = WanImageToVideoPipeline(**self.t2v.components)
             else:
                 pipe = WanImageToVideoPipeline.from_pretrained(self.cfg["i2v_model"], torch_dtype=dtype)
-                pipe = place(pipe, self.cfg.get("cpu_offload", True))
+                pipe = place(pipe, self.cfg.get("cpu_offload", "auto"))
             self.i2v = pipe
         return self.i2v
 

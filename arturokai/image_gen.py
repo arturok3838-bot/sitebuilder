@@ -18,7 +18,7 @@ class ImageGenerator:
         if self.pipe is None:
             _, dtype = pick_device()
             pipe = AutoPipelineForText2Image.from_pretrained(self.cfg["model"], torch_dtype=dtype)
-            self.pipe = place(pipe, self.cfg.get("cpu_offload", True))
+            self.pipe = place(pipe, self.cfg.get("cpu_offload", "auto"))
         return self.pipe
 
     def generate(self, prompt: str, negative: str = "", width=None, height=None,
