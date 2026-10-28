@@ -9,4 +9,4 @@ if [ ! -d .venv ]; then
 else
   . .venv/bin/activate
 fi
-python -m arturokai.app "$@"
+python -m arturokai.server "$@"
