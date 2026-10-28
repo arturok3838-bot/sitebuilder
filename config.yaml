@@ -1,0 +1,41 @@
+# Настройки ARTurokAI. Все модели скачиваются один раз и дальше работают офлайн.
+
+output_dir: outputs
+workspace_dir: workspace
+
+image:
+  # FLUX.1-schnell — быстрая и качественная (Apache-2.0). Альтернатива:
+  # "stabilityai/stable-diffusion-xl-base-1.0" (меньше VRAM).
+  model: black-forest-labs/FLUX.1-schnell
+  steps: 4
+  guidance: 0.0
+  width: 1024
+  height: 1024
+  cpu_offload: true          # true = меньше видеопамяти, но медленнее
+
+video:
+  # Wan 2.2 TI2V-5B умеет и текст->видео, и картинка->видео (продолжение сцены).
+  t2v_model: Wan-AI/Wan2.2-TI2V-5B-Diffusers
+  i2v_model: Wan-AI/Wan2.2-TI2V-5B-Diffusers
+  width: 1280
+  height: 704
+  fps: 24
+  frames_per_segment: 121    # ~5 секунд на сегмент; должно быть 4k+1
+  steps: 40
+  guidance: 5.0
+  max_seconds: 120           # максимум 2 минуты
+  cpu_offload: true
+
+llm:
+  # Локальный сервер Ollama (https://ollama.com). Модель для кода и чата.
+  host: http://127.0.0.1:11434
+  model: qwen2.5-coder:14b
+  temperature: 0.4
+  context_chars: 60000       # сколько текста из ZIP передавать модели
+  system_prompt: >
+    Ты — ARTurokAI, личный ассистент-программист. Отвечай по-русски, пиши
+    полный рабочий код, каждый файл оформляй блоком ```язык path/к/файлу.
+
+zip:
+  max_total_mb: 500
+  max_files: 5000
