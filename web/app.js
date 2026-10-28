@@ -100,8 +100,8 @@ async function loadCatalog() {
 $("#to-plans").addEventListener("click", () => $("#plans").scrollIntoView({ behavior: "smooth" }));
 
 /* ---------- Навигация ---------- */
-const views = ["home", "auth", "image", "video", "code", "gallery", "cabinet", "admin"];
-const needLogin = ["image", "video", "code", "gallery", "cabinet", "admin"];
+const views = ["home", "auth", "image", "video", "code", "tables", "gallery", "cabinet", "admin"];
+const needLogin = ["image", "video", "code", "tables", "gallery", "cabinet", "admin"];
 function route() {
   let name = views.includes(location.hash.slice(1)) ? location.hash.slice(1) : "home";
   if (needLogin.includes(name) && !me) {
@@ -115,6 +115,7 @@ function route() {
   if (name === "gallery") loadGallery();
   if (name === "cabinet") refreshMe();
   if (name === "admin") loadAdmin();
+  if (name === "tables") loadSheets();
   if (name === "code") warmup();
   window.scrollTo(0, 0);
 }
@@ -204,8 +205,13 @@ async function loadStatus() {
   $("#image-form").steps.value = status.image.steps;
   $("#video-form").steps.value = status.video.steps;
   renderEfforts();
+  // Движок: локальная модель + подключённые внешние нейросети (DeepSeek, Kimi, ChatGPT).
+  const ext = (status.providers || []).map((p) => `<option value="${p.id}">${esc(p.label)} — ${credits(p.cost)}</option>`).join("");
+  $("#engine").innerHTML = `<option value="local">Локальная (на вашем ПК)</option>` + ext;
+  $("#engine").value = engine;
   $("#model").innerHTML =
     `<option value="">Авто — по уровню</option>` + status.models.map((m) => `<option>${esc(m)}</option>`).join("");
+  applyEngine();
 }
 
 // Кнопки уровней усилий строятся из ответа сервера (их названия и цена — в config.yaml).
@@ -236,7 +242,36 @@ function applyEffortLimits() {
   }
   cur = status.efforts[effort];
   if (cur) $("#chat-cost").textContent = `Стоимость сообщения: ${credits(cur.cost)}` + ($("#explain").checked ? " · с объяснением" : "");
+  applyEngine();
 }
+
+// Выбор внешней нейросети. Внешние доступны только на платных тарифах.
+let engine = "local";
+try { engine = localStorage.getItem("engine") || "local"; } catch {}
+function applyEngine() {
+  if (!me) return;
+  const sel = $("#engine");
+  const external = engine !== "local";
+  if (external && !me.limits.external) {
+    engine = "local";
+    sel.value = "local";
+  }
+  // Для внешней модели цена берётся из её пункта; уровень влияет только на длину.
+  const prov = (status?.providers || []).find((p) => p.id === engine);
+  if (prov) $("#chat-cost").textContent = `Стоимость сообщения: ${credits(prov.cost)} (${esc(prov.label)})`;
+  $("#efforts").classList.toggle("dim", external);
+  if (!me.limits.external) {
+    sel.title = "Внешние нейросети — в платных тарифах";
+  } else {
+    sel.title = "";
+  }
+}
+$("#engine").addEventListener("change", (e) => {
+  engine = e.target.value;
+  try { localStorage.setItem("engine", engine); } catch {}
+  applyEngine();
+  if (engine === "local") warmup();
+});
 
 setInterval(async () => {
   if (!me) return;
@@ -507,7 +542,7 @@ $("#explain").addEventListener("change", applyEffortLimits);
 
 // Просим сервер заранее загрузить модель, чтобы ответ начался без ожидания.
 function warmup() {
-  if (location.hash !== "#code" || !me) return;
+  if (location.hash !== "#code" || !me || engine !== "local") return;  // внешним моделям прогрев не нужен
   postJSON("/api/warmup", { effort, model: $("#model").value || null, project_id: projectId }).catch(() => {});
 }
 $("#model").addEventListener("change", warmup);
@@ -550,7 +585,7 @@ async function sendChat() {
   input.value = "";
   history.push({ role: "user", content: text });
   const answer = { role: "assistant", content: "" };
-  const req = { messages: history.slice(), effort, explain: $("#explain").checked,
+  const req = { messages: history.slice(), effort, engine, explain: $("#explain").checked,
                 model: $("#model").value || null, project_id: projectId };
   history.push(answer);
   renderChat();
@@ -672,9 +707,253 @@ async function loadAdmin() {
       users.map((u) => `<tr><td>${esc(u.login)}${u.is_admin ? " 👑" : ""}</td><td>${esc(u.plan_name)}</td>
         <td>${u.percent}% (${u.credits}/${u.quota})</td><td>${u.bonus}</td>
         <td>${u.plan_until ? fmtDate(u.plan_until) : "—"}</td><td>${fmtDate(u.created)}</td></tr>`).join("");
+    loadPricing();
   } catch (err) {
     toast(err.message);
   }
+}
+
+/* ---------- Админ: цены ---------- */
+async function loadPricing() {
+  const p = await (await api("/api/admin/pricing")).json();
+  const f = $("#pricing-form");
+  f.image.value = p.costs.image;
+  f.video_second.value = p.costs.video_second;
+  f.chat.value = p.costs.chat;
+  // Цена и кредиты по каждому платному тарифу.
+  $("#plan-prices").innerHTML = Object.entries(p.plans)
+    .filter(([id]) => id !== "free")
+    .map(([id, pl]) => `<div class="price-row"><b>${esc(pl.name)}</b>
+        <label>Цена (текст)<input data-price="${id}" value="${esc(pl.price)}"></label>
+        <label>Кредитов в тарифе<input data-credits="${id}" type="number" min="0" value="${pl.credits}"></label>
+      </div>`)
+    .join("");
+}
+$("#pricing-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const plans = {};
+  $$("[data-price]").forEach((i) => (plans[i.dataset.price] = { ...plans[i.dataset.price], price: i.value }));
+  $$("[data-credits]").forEach((i) => (plans[i.dataset.credits] = { ...plans[i.dataset.credits], credits: +i.value }));
+  try {
+    await postJSON("/api/admin/pricing", {
+      costs: { image: +f.image.value, video_second: +f.video_second.value, chat: +f.chat.value },
+      plans,
+    });
+    toast("Цены сохранены — их уже видят все", true);
+    loadCatalog();            // обновляем тарифы на сайте
+    if (me) loadStatus();
+  } catch (err) {
+    toast(err.message);
+  }
+});
+
+/* ---------- Таблицы с автоподсчётом ---------- */
+let sheet = null;             // открытая таблица {id, name, rows, cols, data}
+let sheetSaveTimer = null;
+
+async function loadSheets() {
+  try {
+    const list = await (await api("/api/sheets")).json();
+    $("#sheet-list").innerHTML = list.length
+      ? list.map((s) => `<button type="button" class="sheet-item ${sheet && sheet.id === s.id ? "on" : ""}" data-sheet="${s.id}">${esc(s.name)}</button>`).join("")
+      : `<p class="hint">Таблиц пока нет</p>`;
+    $$("[data-sheet]").forEach((b) => b.addEventListener("click", () => openSheet(+b.dataset.sheet)));
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+$("#new-sheet").addEventListener("click", async () => {
+  try {
+    const s = await (await postJSON("/api/sheets", { name: "Таблица", rows: 10, cols: 6 })).json();
+    await loadSheets();
+    openSheet(s.id);
+  } catch (err) {
+    toast(err.message);
+  }
+});
+
+async function openSheet(id) {
+  sheet = await (await api("/api/sheets/" + id)).json();
+  $("#sheet-empty").hidden = true;
+  $("#sheet-head").hidden = false;
+  $("#sheet-name").value = sheet.name;
+  $$("[data-sheet]").forEach((b) => b.classList.toggle("on", +b.dataset.sheet === id));
+  renderSheet();
+}
+
+const colName = (n) => {            // 0->A, 25->Z, 26->AA …
+  let s = "";
+  n += 1;
+  while (n > 0) {
+    s = String.fromCharCode(65 + ((n - 1) % 26)) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+};
+
+function renderSheet() {
+  if (!sheet) return;
+  const vals = computeSheet(sheet.data);
+  let html = "<tr><th></th>";
+  for (let c = 0; c < sheet.cols; c++) html += `<th>${colName(c)}</th>`;
+  html += "</tr>";
+  for (let r = 0; r < sheet.rows; r++) {
+    html += `<tr><th>${r + 1}</th>`;
+    for (let c = 0; c < sheet.cols; c++) {
+      const raw = sheet.data[r][c] ?? "";
+      const shown = vals[r][c];
+      html += `<td><input data-r="${r}" data-c="${c}" value="${esc(raw)}" title="${esc(String(shown))}"></td>`;
+    }
+    html += "</tr>";
+  }
+  $("#sheet").innerHTML = html;
+  // Показываем посчитанный результат, пока ячейка не в фокусе; при фокусе — формулу.
+  $$("#sheet input").forEach((inp) => {
+    const r = +inp.dataset.r, c = +inp.dataset.c;
+    if (document.activeElement !== inp && String(sheet.data[r][c]).startsWith("=")) inp.value = vals[r][c];
+    inp.addEventListener("focus", () => (inp.value = sheet.data[r][c] ?? ""));
+    inp.addEventListener("blur", () => {
+      sheet.data[r][c] = inp.value;
+      renderSheet();
+      scheduleSheetSave();
+    });
+  });
+}
+
+function scheduleSheetSave() {
+  $("#sheet-saved").textContent = "сохранение…";
+  clearTimeout(sheetSaveTimer);
+  sheetSaveTimer = setTimeout(saveSheet, 700);
+}
+
+async function saveSheet() {
+  if (!sheet) return;
+  try {
+    await api("/api/sheets/" + sheet.id, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: $("#sheet-name").value, rows: sheet.rows, cols: sheet.cols, data: sheet.data }),
+    });
+    $("#sheet-saved").textContent = "✓ сохранено";
+    loadSheets();
+  } catch (err) {
+    $("#sheet-saved").textContent = "";
+    toast(err.message);
+  }
+}
+$("#sheet-name").addEventListener("input", scheduleSheetSave);
+$("#add-row").addEventListener("click", () => {
+  if (!sheet) return;
+  sheet.data.push(new Array(sheet.cols).fill(""));
+  sheet.rows++;
+  renderSheet();
+  scheduleSheetSave();
+});
+$("#add-col").addEventListener("click", () => {
+  if (!sheet) return;
+  sheet.data.forEach((row) => row.push(""));
+  sheet.cols++;
+  renderSheet();
+  scheduleSheetSave();
+});
+$("#del-sheet").addEventListener("click", async () => {
+  if (!sheet || !confirm("Удалить эту таблицу?")) return;
+  await api("/api/sheets/" + sheet.id, { method: "DELETE" });
+  sheet = null;
+  $("#sheet-head").hidden = true;
+  $("#sheet").innerHTML = "";
+  $("#sheet-empty").hidden = false;
+  loadSheets();
+});
+
+// Разбор арифметики (+ - * / и скобки) без eval — рекурсивный спуск, безопасно при CSP.
+function safeArith(src) {
+  const s = src.replace(/\s+/g, "");
+  let i = 0;
+  const factor = () => {
+    if (s[i] === "(") { i++; const v = expr(); if (s[i] !== ")") throw 0; i++; return v; }
+    if (s[i] === "-") { i++; return -factor(); }
+    if (s[i] === "+") { i++; return factor(); }
+    const m = /^\d+\.?\d*/.exec(s.slice(i));
+    if (!m) throw 0;
+    i += m[0].length;
+    return parseFloat(m[0]);
+  };
+  const term = () => {
+    let v = factor();
+    while (s[i] === "*" || s[i] === "/") { const op = s[i++]; const r = factor(); v = op === "*" ? v * r : v / r; }
+    return v;
+  };
+  function expr() {
+    let v = term();
+    while (s[i] === "+" || s[i] === "-") { const op = s[i++]; const r = term(); v = op === "+" ? v + r : v - r; }
+    return v;
+  }
+  const v = expr();
+  if (i !== s.length) throw 0;
+  return v;
+}
+
+/* Подсчёт значений ячеек. Формула начинается с "=". Поддержка A1, диапазонов,
+   СУММ/СРЗНАЧ/МИН/МАКС/СЧЁТ (и англ. SUM/AVG/MIN/MAX/COUNT), + - * / ( ). */
+function computeSheet(data) {
+  const rows = data.length, cols = data[0]?.length || 0;
+  const cache = {};
+  const cell = (r, c) => (r >= 0 && r < rows && c >= 0 && c < cols ? data[r][c] : "");
+  const ref = (name) => {
+    const m = /^([A-Za-z]+)(\d+)$/.exec(name);
+    if (!m) return 0;
+    let col = 0;
+    for (const ch of m[1].toUpperCase()) col = col * 26 + (ch.charCodeAt(0) - 64);
+    return evalCell(+m[2] - 1, col - 1);
+  };
+  const range = (a, b) => {
+    const pa = /^([A-Za-z]+)(\d+)$/.exec(a), pb = /^([A-Za-z]+)(\d+)$/.exec(b);
+    if (!pa || !pb) return [];
+    const colN = (s) => { let n = 0; for (const ch of s.toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64); return n - 1; };
+    const [c1, c2] = [colN(pa[1]), colN(pb[1])].sort((x, y) => x - y);
+    const [r1, r2] = [+pa[2] - 1, +pb[2] - 1].sort((x, y) => x - y);
+    const out = [];
+    for (let r = r1; r <= r2; r++) for (let c = c1; c <= c2; c++) out.push(evalCell(r, c));
+    return out;
+  };
+  const FUNCS = {
+    SUM: (a) => a.reduce((s, x) => s + (+x || 0), 0), СУММ: (a) => FUNCS.SUM(a),
+    AVG: (a) => (a.length ? FUNCS.SUM(a) / a.length : 0), СРЗНАЧ: (a) => FUNCS.AVG(a),
+    MIN: (a) => Math.min(...a.map(Number)), МИН: (a) => FUNCS.MIN(a),
+    MAX: (a) => Math.max(...a.map(Number)), МАКС: (a) => FUNCS.MAX(a),
+    COUNT: (a) => a.filter((x) => x !== "" && !isNaN(+x)).length, СЧЁТ: (a) => FUNCS.COUNT(a),
+  };
+  function evalFormula(expr) {
+    // Функции с диапазоном: ИМЯ(A1:B2)
+    expr = expr.replace(/([A-Za-zА-Яа-яЁё]+)\(\s*([A-Za-z]+\d+)\s*:\s*([A-Za-z]+\d+)\s*\)/g, (_, fn, a, b) => {
+      const f = FUNCS[fn.toUpperCase()];
+      return f ? f(range(a, b)) : 0;
+    });
+    // Ссылки на ячейки A1 -> значение
+    expr = expr.replace(/\b([A-Za-z]+\d+)\b/g, (_, n) => {
+      const v = ref(n);
+      return isNaN(+v) ? 0 : +v;
+    });
+    if (!/^[-+*/().\s\d]*$/.test(expr)) return "#ОШ";    // только безопасная арифметика
+    try {
+      const val = safeArith(expr || "0");                // без eval/Function — работает при строгом CSP
+      return typeof val === "number" && isFinite(val) ? Math.round(val * 1e6) / 1e6 : "#ОШ";
+    } catch {
+      return "#ОШ";
+    }
+  }
+  function evalCell(r, c) {
+    const key = r + ":" + c;
+    if (key in cache) return cache[key];
+    cache[key] = "#ЦИКЛ";                 // защита от зацикленных ссылок
+    const raw = String(cell(r, c) ?? "");
+    const out = raw.startsWith("=") ? evalFormula(raw.slice(1)) : raw;
+    cache[key] = out;
+    return out;
+  }
+  return data.map((row, r) => row.map((_, c) => evalCell(r, c)));
 }
 
 /* ---------- Просмотр на весь экран ---------- */

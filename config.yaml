@@ -44,6 +44,12 @@ llm:
     low:    {label: "⚡ Быстро",   use: fast,    num_predict: 1024,  cost_mult: 1}
     medium: {label: "⚖️ Обычно",   use: fast,    num_predict: 4096,  cost_mult: 2}
     high:   {label: "🎯 Максимум", use: precise, num_predict: 16384, cost_mult: 4}
+  # Внешние нейросети (работают по платному API-ключу из переменной окружения).
+  # Модель включается в выборе, только если её ключ задан. У ChatGPT бесплатного API нет.
+  providers:
+    - {id: deepseek, label: "DeepSeek",         base_url: "https://api.deepseek.com/v1",  model: "deepseek-chat",     api_key_env: DEEPSEEK_API_KEY, cost_mult: 3}
+    - {id: kimi,     label: "Kimi (слабая)",    base_url: "https://api.moonshot.cn/v1",   model: "moonshot-v1-8k",    api_key_env: MOONSHOT_API_KEY, cost_mult: 3}
+    - {id: openai,   label: "ChatGPT",          base_url: "https://api.openai.com/v1",    model: "gpt-4o-mini",       api_key_env: OPENAI_API_KEY,   cost_mult: 4}
   system_prompt: >
     Ты — ARTurokAI, личный ассистент-программист. Отвечай по-русски, быстро и
     понятно: сразу по делу, без вступлений и повторов вопроса. Короткие абзацы,
@@ -77,6 +83,7 @@ billing:
       max_images: 1
       video_max_seconds: 0 # 0 — видео недоступно
       chat_modes: [fast]
+      external: false
       zip: false
       includes:
         - "Бесплатные нейросети: FLUX.1-schnell (фото) и Qwen2.5-Coder 7B (код)"
@@ -93,6 +100,7 @@ billing:
       max_images: 4
       video_max_seconds: 30
       chat_modes: [fast, precise]
+      external: true
       zip: true
       includes:
         - "Фото до 1536 px, до 4 за раз"
@@ -109,6 +117,7 @@ billing:
       max_images: 4
       video_max_seconds: 120
       chat_modes: [fast, precise]
+      external: true
       zip: true
       includes:
         - "Фото до 2048 px"

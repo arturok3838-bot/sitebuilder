@@ -23,6 +23,7 @@
       <a href="#image">Фото</a>
       <a href="#video">Видео</a>
       <a href="#code">Код</a>
+      <a href="#tables">Таблицы</a>
       <a href="#gallery">Галерея</a>
       <a href="#cabinet">Кабинет</a>
       <a href="#admin" id="nav-admin" hidden>Админ</a>
@@ -149,6 +150,7 @@
             <span id="zip-text">Перетащите ZIP проекта или нажмите</span>
           </label>
           <pre class="tree" id="zip-tree" hidden></pre>
+          <label>Движок<select id="engine"><option value="local">Локальная (на вашем ПК)</option></select></label>
           <div class="field-label">Уровень усилий</div>
           <div class="modes" id="efforts"></div>
           <label class="switch"><input type="checkbox" id="explain"><span>Подробное объяснение</span></label>
@@ -172,6 +174,32 @@
     <section id="view-gallery" class="view" hidden>
       <h2 class="page-title">Мои работы</h2>
       <div class="grid big" id="gallery"></div>
+    </section>
+
+    <!-- Таблицы с автоподсчётом -->
+    <section id="view-tables" class="view" hidden>
+      <div class="studio tables">
+        <aside class="panel">
+          <h2>📊 Таблицы</h2>
+          <button class="btn primary wide" id="new-sheet">+ Новая таблица</button>
+          <div class="sheet-list" id="sheet-list"></div>
+          <p class="hint">Формулы: начните ячейку со знака <b>=</b>. Например
+            <code>=A1+B1</code>, <code>=A1*2</code>, <code>=СУММ(A1:A5)</code>,
+            <code>=СРЗНАЧ(B1:B4)</code>. Подсчёт — автоматически.</p>
+        </aside>
+        <div class="panel sheet-panel">
+          <div class="sheet-head" id="sheet-head" hidden>
+            <input id="sheet-name" placeholder="Название таблицы">
+            <span class="grow"></span>
+            <button class="btn small" id="add-row" type="button">+ строка</button>
+            <button class="btn small" id="add-col" type="button">+ столбец</button>
+            <span id="sheet-saved" class="hint saved"></span>
+            <button class="btn ghost small" id="del-sheet" type="button">Удалить</button>
+          </div>
+          <div class="sheet-wrap"><table class="sheet" id="sheet"></table></div>
+          <p class="empty" id="sheet-empty">Создайте таблицу слева или выберите существующую.</p>
+        </div>
+      </div>
     </section>
 
     <!-- Личный кабинет -->
@@ -206,6 +234,19 @@
     <!-- Админ-панель -->
     <section id="view-admin" class="view" hidden>
       <h2 class="page-title">Админ-панель</h2>
+
+      <form class="panel" id="pricing-form">
+        <h3>Цены (меняются сразу для всех)</h3>
+        <div class="price-grid">
+          <label>Фото, кредитов<input name="image" type="number" min="0"></label>
+          <label>1 сек видео, кредитов<input name="video_second" type="number" min="0"></label>
+          <label>Сообщение в «Код», кредитов<input name="chat" type="number" min="0"></label>
+        </div>
+        <div id="plan-prices"></div>
+        <button class="btn primary">Сохранить цены</button>
+      </form>
+
+      <h2 class="section-title">Создание кодов</h2>
       <div class="cabinet">
         <form class="panel" id="codes-form">
           <h3>Создать коды для продажи</h3>

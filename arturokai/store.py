@@ -8,6 +8,7 @@
 """
 import hashlib
 import hmac
+import json
 import math
 import secrets
 import sqlite3
@@ -55,6 +56,19 @@ CREATE TABLE IF NOT EXISTS files (
     prompt TEXT NOT NULL DEFAULT '',
     created REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL            -- JSON; сюда админ сохраняет переопределения цен
+);
+CREATE TABLE IF NOT EXISTS sheets (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    cols INTEGER NOT NULL,
+    rows INTEGER NOT NULL,
+    data TEXT NOT NULL,           -- JSON: двумерный массив текста ячеек (формулы — как есть)
+    updated REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS usage (
     id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -91,14 +105,58 @@ def new_code() -> str:
 
 
 class Store:
-    def __init__(self, path: str | Path, plans: dict):
-        self.plans = plans
+    def __init__(self, path: str | Path, plans: dict, costs: dict | None = None):
+        self.plans = plans          # эти словари меняются «на месте», когда админ правит цены,
+        self.costs = costs or {}    # поэтому все, кто держит ссылку, сразу видят новые цены
         self.lock = threading.RLock()
         self.db = sqlite3.connect(str(path), check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
         self.db.execute("PRAGMA journal_mode = WAL")
         self.db.executescript(SCHEMA)
+        self._apply_pricing()
+
+    # ---------- цены (переопределения админа поверх config.yaml) ----------
+    def _apply_pricing(self):
+        """Накладывает сохранённые админом цены на словари plans/costs (на месте)."""
+        row = self.db.execute("SELECT value FROM settings WHERE key = 'pricing'").fetchone()
+        if not row:
+            return
+        data = json.loads(row["value"])
+        for k, v in data.get("costs", {}).items():
+            if k in self.costs:
+                self.costs[k] = int(v)
+        for plan_id, fields in data.get("plans", {}).items():
+            if plan_id in self.plans:
+                for f in ("price", "credits"):
+                    if f in fields:
+                        self.plans[plan_id][f] = fields[f]
+
+    def get_pricing(self) -> dict:
+        return {
+            "costs": dict(self.costs),
+            "plans": {k: {"name": p["name"], "price": p.get("price", ""), "credits": p.get("credits", 0)}
+                      for k, p in self.plans.items()},
+        }
+
+    def set_pricing(self, data: dict):
+        costs = {k: int(v) for k, v in data.get("costs", {}).items() if k in self.costs and int(v) >= 0}
+        plans = {}
+        for plan_id, fields in data.get("plans", {}).items():
+            if plan_id not in self.plans:
+                continue
+            clean = {}
+            if "price" in fields:
+                clean["price"] = str(fields["price"])[:40]
+            if "credits" in fields and int(fields["credits"]) >= 0:
+                clean["credits"] = int(fields["credits"])
+            if clean:
+                plans[plan_id] = clean
+        payload = json.dumps({"costs": costs, "plans": plans})
+        with self.lock:
+            self.db.execute("INSERT OR REPLACE INTO settings VALUES ('pricing', ?)", (payload,))
+            self.db.commit()
+            self._apply_pricing()
 
     # ---------- пользователи ----------
     def create_user(self, login: str, password: str, is_admin=False) -> dict:
@@ -176,7 +234,7 @@ class Store:
             "percent": round(100 * u["credits"] / u["quota"]) if u["quota"] else 0,
             "total": u["credits"] + u["bonus"],
             "limits": {k: plan.get(k) for k in ("max_image_side", "max_images", "video_max_seconds",
-                                            "chat_modes", "zip")},
+                                            "chat_modes", "zip", "external")},
         }
 
     # ---------- сессии ----------
@@ -313,3 +371,45 @@ class Store:
         rows = self.db.execute("SELECT name, kind, prompt, created FROM files WHERE user_id = ? AND kind != 'upload'"
                                " ORDER BY created DESC LIMIT ?", (user_id, limit)).fetchall()
         return [dict(r) for r in rows]
+
+    # ---------- таблицы пользователя ----------
+    def list_sheets(self, user_id: int) -> list[dict]:
+        rows = self.db.execute("SELECT id, name, updated FROM sheets WHERE user_id = ? ORDER BY updated DESC",
+                               (user_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_sheet(self, sheet_id: int, user_id: int) -> dict | None:
+        row = self.db.execute("SELECT * FROM sheets WHERE id = ? AND user_id = ?", (sheet_id, user_id)).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["data"] = json.loads(d["data"])
+        return d
+
+    def create_sheet(self, user_id: int, name: str, rows=10, cols=6) -> dict:
+        name = (name or "Таблица").strip()[:60]
+        data = [["" for _ in range(cols)] for _ in range(rows)]
+        now = time.time()
+        with self.lock:
+            cur = self.db.execute("INSERT INTO sheets (user_id, name, cols, rows, data, updated)"
+                                  " VALUES (?, ?, ?, ?, ?, ?)", (user_id, name, cols, rows, json.dumps(data), now))
+            self.db.commit()
+            return self.get_sheet(cur.lastrowid, user_id)
+
+    def save_sheet(self, sheet_id: int, user_id: int, name: str, rows: int, cols: int, data: list):
+        if self.get_sheet(sheet_id, user_id) is None:
+            raise StoreError("Таблица не найдена")
+        rows, cols = max(1, min(int(rows), 200)), max(1, min(int(cols), 50))
+        # Приводим размер данных к rows×cols и обрезаем длину текста ячейки.
+        grid = [[str(data[r][c])[:500] if r < len(data) and c < len(data[r]) else ""
+                 for c in range(cols)] for r in range(rows)]
+        with self.lock:
+            self.db.execute("UPDATE sheets SET name = ?, cols = ?, rows = ?, data = ?, updated = ? WHERE id = ? AND user_id = ?",
+                            ((name or "Таблица").strip()[:60], cols, rows, json.dumps(grid), time.time(), sheet_id, user_id))
+            self.db.commit()
+        return self.get_sheet(sheet_id, user_id)
+
+    def delete_sheet(self, sheet_id: int, user_id: int):
+        with self.lock:
+            self.db.execute("DELETE FROM sheets WHERE id = ? AND user_id = ?", (sheet_id, user_id))
+            self.db.commit()

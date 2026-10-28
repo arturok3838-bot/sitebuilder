@@ -41,7 +41,7 @@ PLANS, COSTS = BILL["plans"], BILL["costs"]
 COOKIE = "arturokai_session"
 
 llm = LocalLLM(cfg["llm"])
-store = Store(BILL["db"], PLANS)
+store = Store(BILL["db"], PLANS, COSTS)
 
 app = FastAPI(title="ARTurokAI")
 rate_limiter = install_security(app, cfg)
@@ -202,6 +202,7 @@ class ChatReq(BaseModel):
     messages: list[dict]
     model: str | None = None          # явный выбор модели — только для администратора
     effort: Literal["low", "medium", "high"] = "medium"
+    engine: str = "local"             # "local" или id внешней нейросети (deepseek/kimi/openai)
     explain: bool = False             # подробное объяснение решения
     project_id: str | None = None
 
@@ -214,6 +215,18 @@ class WarmupReq(BaseModel):
 
 class ExportReq(BaseModel):
     text: str
+
+
+class PricingReq(BaseModel):
+    costs: dict[str, int] = {}
+    plans: dict[str, dict] = {}
+
+
+class SheetReq(BaseModel):
+    name: str = "Таблица"
+    rows: int = Field(10, ge=1, le=200)
+    cols: int = Field(6, ge=1, le=50)
+    data: list[list[str]] = []
 
 
 # ---------- аккаунт ----------
@@ -280,9 +293,12 @@ def plans():
 def status(u: dict = Depends(current_user)):
     efforts = {k: {"label": e["label"], "use": e["use"], "cost": COSTS["chat"] * e["cost_mult"]}
                for k, e in cfg["llm"]["efforts"].items()}
+    providers = [{"id": p["id"], "label": p["label"], "cost": COSTS["chat"] * p["cost_mult"]}
+                 for p in llm.providers() if p["enabled"]]
     return {"models": llm.available_models() if u["is_admin"] else [],
             "default_model": cfg["llm"]["model"], "fast_model": cfg["llm"]["fast_model"],
-            "efforts": efforts, "image": cfg["image"], "video": cfg["video"], "queue": job_queue.qsize()}
+            "efforts": efforts, "providers": providers,
+            "image": cfg["image"], "video": cfg["video"], "queue": job_queue.qsize()}
 
 
 # ---------- генерация ----------
@@ -391,17 +407,32 @@ def effort_check(req, u: dict) -> tuple[str, str | None, int]:
 
 @app.post("/api/chat")
 def chat(req: ChatReq, u: dict = Depends(current_user)):
-    effort, model, cost = effort_check(req, u)
-    charge(u, cost, f"Код · {cfg['llm']['efforts'][effort]['label']}")
     msgs = [{"role": m["role"], "content": m["content"]} for m in req.messages
             if m.get("role") in ("user", "assistant")]
+    context = project_context(req.project_id, u)
+
+    if req.engine and req.engine != "local":
+        provider = llm.provider(req.engine)
+        enabled = {p["id"] for p in llm.providers() if p["enabled"]}
+        if provider is None or req.engine not in enabled:
+            raise HTTPException(400, "Эта внешняя нейросеть недоступна")
+        if not plan_of(u)["external"]:
+            raise HTTPException(403, f"Внешние нейросети недоступны в тарифе «{plan_of(u)['name']}». "
+                                     "Подключите тариф Старт или Про.")
+        cost = COSTS["chat"] * provider.get("cost_mult", 3)
+        charge(u, cost, f"Код · {provider['label']}")
+        source = llm.chat_stream_external(provider, msgs, context, req.effort, req.explain)
+    else:
+        effort, model, cost = effort_check(req, u)
+        charge(u, cost, f"Код · {cfg['llm']['efforts'][effort]['label']}")
+        source = llm.chat_stream(msgs, model, context, effort, req.explain)
 
     def stream():
         finished = False
-        for piece in llm.chat_stream(msgs, model, project_context(req.project_id, u), effort, req.explain):
+        for piece in source:
             finished = finished or piece.startswith(STATS_MARK)
             yield piece
-        if not finished:  # модель не ответила (Ollama выключена и т. п.) — кредиты возвращаем
+        if not finished:  # модель не ответила (выключена/нет ключа) — кредиты возвращаем
             store.refund(u["id"], cost, "Возврат: модель не ответила")
 
     # X-Accel-Buffering отключает буферизацию в прокси — текст идёт на сайт без задержек.
@@ -460,6 +491,51 @@ def admin_codes_csv(only_free: bool = False, _: dict = Depends(admin_user)):
 @app.get("/api/admin/users")
 def admin_users(_: dict = Depends(admin_user)):
     return store.list_users()
+
+
+@app.get("/api/admin/pricing")
+def admin_get_pricing(_: dict = Depends(admin_user)):
+    return store.get_pricing()
+
+
+@app.post("/api/admin/pricing")
+def admin_set_pricing(req: PricingReq, _: dict = Depends(admin_user)):
+    # Цены меняются «на месте» в общих словарях — все пользователи сразу видят новые.
+    store.set_pricing(req.model_dump())
+    return store.get_pricing()
+
+
+# ---------- таблицы с автоподсчётом ----------
+@app.get("/api/sheets")
+def list_sheets(u: dict = Depends(current_user)):
+    return store.list_sheets(u["id"])
+
+
+@app.get("/api/sheets/{sheet_id}")
+def get_sheet(sheet_id: int, u: dict = Depends(current_user)):
+    sheet = store.get_sheet(sheet_id, u["id"])
+    if sheet is None:
+        raise HTTPException(404, "Таблица не найдена")
+    return sheet
+
+
+@app.post("/api/sheets")
+def create_sheet(req: SheetReq, u: dict = Depends(current_user)):
+    return store.create_sheet(u["id"], req.name, req.rows, req.cols)
+
+
+@app.put("/api/sheets/{sheet_id}")
+def save_sheet(sheet_id: int, req: SheetReq, u: dict = Depends(current_user)):
+    try:
+        return store.save_sheet(sheet_id, u["id"], req.name, req.rows, req.cols, req.data)
+    except StoreError as e:
+        raise HTTPException(404, str(e))
+
+
+@app.delete("/api/sheets/{sheet_id}")
+def delete_sheet(sheet_id: int, u: dict = Depends(current_user)):
+    store.delete_sheet(sheet_id, u["id"])
+    return {"ok": True}
 
 
 # ---------- страницы и установка как приложение (PWA) ----------

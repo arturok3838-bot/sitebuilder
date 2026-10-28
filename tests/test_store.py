@@ -71,3 +71,35 @@ def test_bad_codes(store):
         store.create_codes("plan", 1, plan="free")
     codes = store.create_codes("plan", 20, plan="start")
     assert len(set(codes)) == 20 and all(c.startswith("ARTK-") and len(c) == 19 for c in codes)
+
+
+def test_pricing_override_in_place_and_persist(tmp_path):
+    plans = {"free": {"name": "Бесплатный", "credits": 10, "reset_days": 1, "price": "0 ₽"},
+             "start": {"name": "Старт", "credits": 100, "days": 30, "price": "490 ₽"}}
+    costs = {"image": 2, "video_second": 3, "chat": 1}
+    db = tmp_path / "p.db"
+    store = Store(db, plans, costs)
+    store.set_pricing({"costs": {"image": 5}, "plans": {"start": {"price": "990 ₽", "credits": 200}}})
+    # те же словари меняются «на месте» — их видят все, кто держит ссылку
+    assert costs["image"] == 5 and plans["start"]["price"] == "990 ₽" and plans["start"]["credits"] == 200
+    # и сохраняется между перезапусками
+    plans2 = {"free": {"name": "Бесплатный", "credits": 10, "reset_days": 1, "price": "0 ₽"},
+              "start": {"name": "Старт", "credits": 100, "days": 30, "price": "490 ₽"}}
+    costs2 = {"image": 2, "video_second": 3, "chat": 1}
+    Store(db, plans2, costs2)
+    assert costs2["image"] == 5 and plans2["start"]["credits"] == 200
+
+
+def test_sheets_crud(store):
+    u = store.create_user("tabler", "secret1")
+    s = store.create_sheet(u["id"], "Бюджет", rows=3, cols=2)
+    assert s["name"] == "Бюджет" and s["data"] == [["", ""], ["", ""], ["", ""]]
+    store.save_sheet(s["id"], u["id"], "Бюджет", 2, 2, [["10", "20"], ["=A1+B1", ""]])
+    got = store.get_sheet(s["id"], u["id"])
+    assert got["data"] == [["10", "20"], ["=A1+B1", ""]] and got["rows"] == 2
+    assert [x["id"] for x in store.list_sheets(u["id"])] == [s["id"]]
+    # чужую таблицу не видно
+    other = store.create_user("other2", "secret1")
+    assert store.get_sheet(s["id"], other["id"]) is None
+    store.delete_sheet(s["id"], u["id"])
+    assert store.list_sheets(u["id"]) == []
