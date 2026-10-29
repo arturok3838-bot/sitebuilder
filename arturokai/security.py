@@ -18,10 +18,15 @@ SECURITY_HEADERS = {
     "X-Frame-Options": "DENY",                      # нельзя встроить сайт в чужой iframe
     "Referrer-Policy": "no-referrer",
     "Cross-Origin-Opener-Policy": "same-origin",
-    # Разрешаем только свои ресурсы; микрофон — для голосового ввода.
+    # Свои ресурсы + CDN WebLLM и загрузка моделей (для режима «в браузере клиента»).
+    # 'wasm-unsafe-eval' и blob-воркеры нужны WebLLM; connect — скачивание весов модели.
     "Content-Security-Policy": (
         "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; "
-        "style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'wasm-unsafe-eval' https://esm.run https://cdn.jsdelivr.net; "
+        "worker-src 'self' blob:; child-src 'self' blob:; "
+        "connect-src 'self' https://esm.run https://cdn.jsdelivr.net https://huggingface.co "
+        "https://*.huggingface.co https://raw.githubusercontent.com; "
         "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     ),
     "Permissions-Policy": "microphone=(self), camera=(), geolocation=()",

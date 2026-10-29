@@ -205,9 +205,10 @@ async function loadStatus() {
   $("#image-form").steps.value = status.image.steps;
   $("#video-form").steps.value = status.video.steps;
   renderEfforts();
-  // Движок: локальная модель + подключённые внешние нейросети (DeepSeek, Kimi, ChatGPT).
+  // Движок: локальная (сервер) + внешние (API) + в браузере клиента (WebLLM, бесплатно).
   const ext = (status.providers || []).map((p) => `<option value="${p.id}">${esc(p.label)} — ${credits(p.cost)}</option>`).join("");
-  $("#engine").innerHTML = `<option value="local">Локальная (на вашем ПК)</option>` + ext;
+  const onDevice = ONDEVICE.map((m) => `<option value="${m.id}">🖥 ${esc(m.label)} (в браузере, бесплатно)</option>`).join("");
+  $("#engine").innerHTML = `<option value="local">Локальная (на сервере)</option>` + ext + onDevice;
   $("#engine").value = engine;
   $("#model").innerHTML =
     `<option value="">Авто — по уровню</option>` + status.models.map((m) => `<option>${esc(m)}</option>`).join("");
@@ -245,11 +246,20 @@ function applyEffortLimits() {
   applyEngine();
 }
 
-// Выбор движка. Бесплатные модели (free) доступны всем; платные — на платных тарифах.
+// Модели, которые считаются в браузере клиента (WebLLM). Id моделей — из каталога WebLLM;
+// при желании меняются/дополняются здесь. Работают без сервера, ключа и оплаты.
+const ONDEVICE = [
+  { id: "wb-qwen",     label: "Qwen Coder 1.5B", model: "Qwen2.5-Coder-1.5B-Instruct-q4f16_1-MLC" },
+  { id: "wb-llama",    label: "Llama 3.2 1B",    model: "Llama-3.2-1B-Instruct-q4f32_1-MLC" },
+  { id: "wb-deepseek", label: "DeepSeek-R1 1.5B", model: "DeepSeek-R1-Distill-Qwen-1.5B-q4f16_1-MLC" },
+];
+const onDeviceModel = (id) => ONDEVICE.find((m) => m.id === id);
+
+// Выбор движка. Бесплатные (free) и браузерные доступны всем; платные — на платных тарифах.
 let engine = "local";
 try { engine = localStorage.getItem("engine") || "local"; } catch {}
 const engineAllowed = (id) => {
-  if (id === "local") return true;
+  if (id === "local" || onDeviceModel(id)) return true;
   const p = (status?.providers || []).find((x) => x.id === id);
   return !!p && (p.free || me?.limits.external);
 };
@@ -260,10 +270,11 @@ function applyEngine() {
     engine = "local";
     sel.value = "local";
   }
+  const onDev = onDeviceModel(engine);
   const prov = (status.providers || []).find((p) => p.id === engine);
-  if (prov) $("#chat-cost").textContent = `Стоимость сообщения: ${credits(prov.cost)} (${esc(prov.label)})`;
-  // Уровень усилий влияет и на встроенную, и на внешние модели — не затемняем.
-  $("#efforts").classList.toggle("dim", engine !== "local" && engine !== "builtin");
+  if (onDev) $("#chat-cost").textContent = "Бесплатно — считается в вашем браузере (нужен современный телефон/ПК)";
+  else if (prov) $("#chat-cost").textContent = `Стоимость сообщения: ${credits(prov.cost)} (${esc(prov.label)})`;
+  $("#efforts").classList.toggle("dim", false);   // уровень усилий влияет на все движки
 }
 $("#engine").addEventListener("change", (e) => {
   const id = e.target.value;
@@ -582,6 +593,43 @@ if (SR) {
   $("#mic").hidden = true;
 }
 
+// ----- Модель в браузере клиента (WebLLM) -----
+const SYS_BROWSER = "Ты — ARTurokAI, ассистент-программист. Отвечай по-русски, кратко и по делу. " +
+  "Если нужен код — дай полный рабочий код в блоке ```язык путь.";
+let webllm = null, webllmEngineObj = null, webllmModel = null;
+
+async function getBrowserEngine(modelId, onProgress) {
+  if (!navigator.gpu) throw new Error("ваш браузер/устройство не поддерживает WebGPU — нужен современный Chrome/Edge на ПК или свежий телефон");
+  if (!webllm) webllm = await import("https://esm.run/@mlc-ai/web-llm");
+  if (!webllmEngineObj || webllmModel !== modelId) {
+    webllmEngineObj = await webllm.CreateMLCEngine(modelId, { initProgressCallback: onProgress });
+    webllmModel = modelId;
+  }
+  return webllmEngineObj;
+}
+
+async function sendChatBrowser(answer, onDev) {
+  const t0 = performance.now();
+  const eng = await getBrowserEngine(onDev.model, (p) => {
+    answer.content = "⏳ " + (p.text || "Загрузка модели в браузер…");
+    drawLast();
+  });
+  answer.content = "";
+  const maxTok = status?.efforts?.[effort]?.num_predict || 1024;
+  const msgs = [{ role: "system", content: SYS_BROWSER },
+                ...history.filter((m) => m !== answer).slice(-12).map((m) => ({ role: m.role, content: m.content }))];
+  const chunks = await eng.chat.completions.create({ stream: true, messages: msgs, temperature: 0.3, max_tokens: Math.min(maxTok, 1024) });
+  let firstWord = 0, n = 0;
+  for await (const ch of chunks) {
+    answer.content += ch.choices?.[0]?.delta?.content || "";
+    n += 1;
+    if (!firstWord && answer.content.trim()) firstWord = (performance.now() - t0) / 1000;
+    drawLast();
+  }
+  const total = (performance.now() - t0) / 1000;
+  answer.stats = `🖥 в браузере · первые слова через ${firstWord.toFixed(1)} с · всего ${total.toFixed(1)} с · ${onDev.label}`;
+}
+
 let sending = false;
 async function sendChat() {
   const input = $("#chat-input");
@@ -591,10 +639,27 @@ async function sendChat() {
   input.value = "";
   history.push({ role: "user", content: text });
   const answer = { role: "assistant", content: "" };
-  const req = { messages: history.slice(), effort, engine, explain: $("#explain").checked,
-                model: $("#model").value || null, project_id: projectId };
   history.push(answer);
   renderChat();
+
+  const onDev = onDeviceModel(engine);
+  if (onDev) {                      // считаем в браузере клиента — сервер и кредиты не трогаем
+    try {
+      await sendChatBrowser(answer, onDev);
+    } catch (err) {
+      const m = String(err?.message || err);
+      answer.content = "⚠️ " + (/gpu|webgpu|compatible/i.test(m)
+        ? "Это устройство не поддерживает запуск модели в браузере (нужен современный ПК или телефон с WebGPU, браузер Chrome/Edge). Выберите другой движок — например «Встроенная (без ключа)» или бесплатные облачные."
+        : m);
+    } finally {
+      sending = false;
+      drawLast();
+    }
+    return;
+  }
+
+  const req = { messages: history.slice(0, -1), effort, engine, explain: $("#explain").checked,
+                model: $("#model").value || null, project_id: projectId };
   const t0 = performance.now();
   let firstWord = 0;
   let tail = "";
