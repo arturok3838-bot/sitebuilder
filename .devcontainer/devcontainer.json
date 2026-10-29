@@ -6,7 +6,7 @@
     "ARTUROKAI_ADMIN_PASSWORD": "test1234",
     "HF_HOME": "/workspaces/.hf"
   },
-  "postCreateCommand": "pip install -r requirements-lite.txt && pip install torch --index-url https://download.pytorch.org/whl/cpu && pip install -r requirements-builtin.txt",
+  "postCreateCommand": "pip install -r requirements-lite.txt && pip install torch --index-url https://download.pytorch.org/whl/cpu && pip install -r requirements-builtin.txt && python -c \"from transformers import AutoTokenizer, AutoModelForCausalLM as M; AutoTokenizer.from_pretrained('Qwen/Qwen2.5-Coder-0.5B-Instruct'); M.from_pretrained('Qwen/Qwen2.5-Coder-0.5B-Instruct')\"",
   "postAttachCommand": "pgrep -f 'arturokai.server' >/dev/null || nohup python -m arturokai.server --host 0.0.0.0 --port 7860 > /tmp/arturokai.log 2>&1 &",
   "forwardPorts": [7860],
   "portsAttributes": {
