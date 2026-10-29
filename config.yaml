@@ -61,6 +61,11 @@ llm:
     - {id: free-auto,     label: "Авто (бесплатно)",       base_url: "https://openrouter.ai/api/v1", model: "openrouter/free",          api_key_env: OPENROUTER_API_KEY, cost_mult: 1, free: true, use_or_headers: true}
     - {id: free-qwen,     label: "Qwen Coder (бесплатно)", base_url: "https://openrouter.ai/api/v1", model: "qwen/qwen3-coder:free",    api_key_env: OPENROUTER_API_KEY, cost_mult: 1, free: true, use_or_headers: true}
     - {id: free-deepseek, label: "DeepSeek (бесплатно)",   base_url: "https://openrouter.ai/api/v1", model: "deepseek/deepseek-r1:free", api_key_env: OPENROUTER_API_KEY, cost_mult: 1, free: true, use_or_headers: true}
+    #     Ещё бесплатные — каждый на СВОЙ бесплатный ключ (без карты, свой аккаунт):
+    #     Groq → console.groq.com, Gemini → aistudio.google.com, Mistral → console.mistral.ai
+    - {id: free-groq,     label: "Llama 70B (Groq)",       base_url: "https://api.groq.com/openai/v1",  model: "llama-3.3-70b-versatile", api_key_env: GROQ_API_KEY,    cost_mult: 1, free: true}
+    - {id: free-gemini,   label: "Gemini Flash",           base_url: "https://generativelanguage.googleapis.com/v1beta/openai/", model: "gemini-2.0-flash", api_key_env: GEMINI_API_KEY, cost_mult: 1, free: true}
+    - {id: free-mistral,  label: "Mistral Small",          base_url: "https://api.mistral.ai/v1",       model: "mistral-small-latest",    api_key_env: MISTRAL_API_KEY, cost_mult: 1, free: true}
     # --- ПЛАТНЫЕ (дешёвые/сильные) — включим позже, на платных тарифах ---
     - {id: deepseek, label: "DeepSeek (платно)", base_url: "https://api.deepseek.com/v1", model: "deepseek-chat",  api_key_env: DEEPSEEK_API_KEY, cost_mult: 3}
     - {id: kimi,     label: "Kimi",              base_url: "https://api.moonshot.cn/v1",  model: "moonshot-v1-8k", api_key_env: MOONSHOT_API_KEY, cost_mult: 3}

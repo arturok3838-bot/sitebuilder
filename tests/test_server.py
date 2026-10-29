@@ -311,3 +311,13 @@ def test_builtin_engine(monkeypatch):
     r = c.post("/api/chat", json={"messages": [{"role": "user", "content": "hi"}], "engine": "builtin"})
     assert "Готово" in r.text
     assert c.get("/api/me").json()["total"] == before - server.COSTS["chat"]
+
+
+def test_more_free_providers_present(monkeypatch):
+    # Бесплатные провайдеры должны быть помечены free и включаться по своему ключу.
+    free_ids = {p["id"] for p in server.llm.providers() if p["free"]}
+    assert {"free-groq", "free-gemini", "free-mistral"} <= free_ids
+    monkeypatch.setenv("GROQ_API_KEY", "x")
+    c = client("manyfree")
+    provs = {p["id"]: p for p in c.get("/api/status").json()["providers"]}
+    assert provs["free-groq"]["free"] is True          # включился при своём ключе, виден бесплатному тарифу
