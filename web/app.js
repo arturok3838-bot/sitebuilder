@@ -204,14 +204,21 @@ async function loadStatus() {
   }
   $("#image-form").steps.value = status.image.steps;
   $("#video-form").steps.value = status.video.steps;
-  renderEfforts();
   // Движок: локальная (сервер) + внешние (API) + в браузере клиента (WebLLM, бесплатно).
   const ext = (status.providers || []).map((p) => `<option value="${p.id}">${esc(p.label)} — ${credits(p.cost)}</option>`).join("");
   const onDevice = ONDEVICE.map((m) => `<option value="${m.id}">🖥 ${esc(m.label)} (в браузере, бесплатно)</option>`).join("");
-  $("#engine").innerHTML = `<option value="local">Локальная (на сервере)</option>` + ext + onDevice;
+  $("#engine").innerHTML = `<option value="local">Локальная (на сервере, нужна Ollama)</option>` + ext + onDevice;
+  // По умолчанию — бесплатный для владельца движок: встроенная → бесплатная облачная → в браузере.
+  // Выбираем ДО renderEfforts (он дёргает applyEngine), иначе пустой движок сбросится на local.
+  const ids = Array.from($("#engine").options).map((o) => o.value);
+  if (!ids.includes(engine)) {
+    engine = ids.includes("builtin") ? "builtin"
+      : ((status.providers || []).find((p) => p.free)?.id || ONDEVICE[0]?.id || "local");
+  }
   $("#engine").value = engine;
   $("#model").innerHTML =
     `<option value="">Авто — по уровню</option>` + status.models.map((m) => `<option>${esc(m)}</option>`).join("");
+  renderEfforts();
   applyEngine();
 }
 
@@ -256,8 +263,9 @@ const ONDEVICE = [
 const onDeviceModel = (id) => ONDEVICE.find((m) => m.id === id);
 
 // Выбор движка. Бесплатные (free) и браузерные доступны всем; платные — на платных тарифах.
-let engine = "local";
-try { engine = localStorage.getItem("engine") || "local"; } catch {}
+// Пусто = не выбран: тогда loadStatus подставит бесплатный движок по умолчанию.
+let engine = "";
+try { engine = localStorage.getItem("engine") || ""; } catch {}
 const engineAllowed = (id) => {
   if (id === "local" || onDeviceModel(id)) return true;
   const p = (status?.providers || []).find((x) => x.id === id);
