@@ -1,0 +1,4 @@
+# Для встроенной модели (ИИ без ключа). torch ставится отдельно (CPU-сборка), см. README/devcontainer.
+transformers>=4.49
+jinja2
+accelerate

@@ -1,0 +1,16 @@
+# Запуск сайта и Telegram-бота одной командой:  docker compose up -d
+# Секреты берутся из файла .env (см. .env.example). Данные — в папке ./data.
+services:
+  web:
+    build: .
+    ports: ["7860:7860"]
+    env_file: .env
+    volumes: ["./data:/app/data"]
+    restart: unless-stopped
+  bot:
+    build: .
+    command: python -m arturokai.telegram_bot
+    env_file: .env
+    volumes: ["./data:/app/data"]   # общая база с сайтом: коды из бота сразу видны на сайте
+    restart: unless-stopped
+    depends_on: [web]

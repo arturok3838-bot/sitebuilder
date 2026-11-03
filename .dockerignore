@@ -1,0 +1,10 @@
+.git
+.venv
+data
+outputs
+workspace
+models
+__pycache__
+*.whl
+*.pyc
+.env

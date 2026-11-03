@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+outputs/
+workspace/
+models/
+*.whl
+data/
+.env

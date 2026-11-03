@@ -1,0 +1,153 @@
+# Настройки ARTurokAI. Все модели скачиваются один раз и дальше работают офлайн.
+
+output_dir: outputs
+workspace_dir: workspace
+
+image:
+  # FLUX.1-schnell — быстрая и качественная (Apache-2.0). Альтернатива:
+  # "stabilityai/stable-diffusion-xl-base-1.0" (меньше VRAM).
+  model: black-forest-labs/FLUX.1-schnell
+  steps: 4
+  guidance: 0.0
+  width: 1024
+  height: 1024
+  cpu_offload: auto          # auto = на видеокарте, если хватает памяти (быстро); true = экономия VRAM
+
+video:
+  # Wan 2.2 TI2V-5B умеет и текст->видео, и картинка->видео (продолжение сцены).
+  t2v_model: Wan-AI/Wan2.2-TI2V-5B-Diffusers
+  i2v_model: Wan-AI/Wan2.2-TI2V-5B-Diffusers
+  width: 1280
+  height: 704
+  fps: 24
+  frames_per_segment: 121    # ~5 секунд на сегмент; должно быть 4k+1
+  steps: 40
+  guidance: 5.0
+  max_seconds: 120           # максимум 2 минуты
+  cpu_offload: auto
+
+llm:
+  # Локальный сервер Ollama (https://ollama.com).
+  host: http://127.0.0.1:11434
+  fast_model: qwen2.5-coder:7b    # режим «⚡ Быстро» (по умолчанию)
+  model: qwen2.5-coder:14b        # режим «🎯 Точно» — для сложных задач
+  keep_alive: 60m                 # сколько держать модель в памяти после ответа
+  preload: true                   # загрузить быструю модель сразу при запуске сайта
+  temperature: 0.3
+  num_ctx: 8192                   # контекст без ZIP — меньше значит быстрее
+  num_ctx_project: 32768          # контекст, когда загружен ZIP-проект
+  max_history: 12                 # сколько последних сообщений помнить в диалоге
+  context_chars: 60000            # сколько текста из ZIP передавать модели
+  # Встроенная модель — работает БЕЗ ключа и БЕЗ интернета (для бесплатного тарифа «из коробки»).
+  builtin:
+    enabled: true
+    model: "Qwen/Qwen2.5-Coder-0.5B-Instruct"   # лёгкая, быстрая на CPU; для качества — 1.5B или 7B
+    cost_mult: 1
+    max_new_tokens_cap: 512                       # предел длины ответа (чтобы на CPU не висело)
+  # Уровни усилий: чем выше — тем длиннее и тщательнее ответ, но дороже по кредитам.
+  # use: fast = лёгкая модель (fast_model), precise = большая (model).
+  efforts:
+    low:    {label: "⚡ Быстро",   use: fast,    num_predict: 1024,  cost_mult: 1}
+    medium: {label: "⚖️ Обычно",   use: fast,    num_predict: 4096,  cost_mult: 2}
+    high:   {label: "🎯 Максимум", use: precise, num_predict: 16384, cost_mult: 4}
+  # Внешние нейросети (работают по платному API-ключу из переменной окружения).
+  # Модель включается в выборе, только если её ключ задан. У ChatGPT бесплатного API нет.
+  # Для OpenRouter рекомендуется передавать эти заголовки (необязательно).
+  openrouter_headers: {"HTTP-Referer": "https://arturok.ai", "X-Title": "ARTurokAI"}
+  providers:
+    # --- БЕСПЛАТНЫЕ (доступны на бесплатном тарифе). Нужен один бесплатный ключ
+    #     OPENROUTER_API_KEY с openrouter.ai (без карты). id моделей :free иногда
+    #     меняются — «Авто» сам берёт доступную бесплатную; остальные можно править тут.
+    - {id: free-auto,     label: "Авто (бесплатно)",       base_url: "https://openrouter.ai/api/v1", model: "openrouter/free",          api_key_env: OPENROUTER_API_KEY, cost_mult: 1, free: true, use_or_headers: true}
+    - {id: free-qwen,     label: "Qwen Coder (бесплатно)", base_url: "https://openrouter.ai/api/v1", model: "qwen/qwen3-coder:free",    api_key_env: OPENROUTER_API_KEY, cost_mult: 1, free: true, use_or_headers: true}
+    - {id: free-deepseek, label: "DeepSeek (бесплатно)",   base_url: "https://openrouter.ai/api/v1", model: "deepseek/deepseek-r1:free", api_key_env: OPENROUTER_API_KEY, cost_mult: 1, free: true, use_or_headers: true}
+    #     Ещё бесплатные — каждый на СВОЙ бесплатный ключ (без карты, свой аккаунт):
+    #     Groq → console.groq.com, Gemini → aistudio.google.com, Mistral → console.mistral.ai
+    - {id: free-groq,     label: "Llama 70B (Groq)",       base_url: "https://api.groq.com/openai/v1",  model: "llama-3.3-70b-versatile", api_key_env: GROQ_API_KEY,    cost_mult: 1, free: true}
+    - {id: free-gemini,   label: "Gemini Flash",           base_url: "https://generativelanguage.googleapis.com/v1beta/openai/", model: "gemini-2.0-flash", api_key_env: GEMINI_API_KEY, cost_mult: 1, free: true}
+    - {id: free-mistral,  label: "Mistral Small",          base_url: "https://api.mistral.ai/v1",       model: "mistral-small-latest",    api_key_env: MISTRAL_API_KEY, cost_mult: 1, free: true}
+    # --- ПЛАТНЫЕ (дешёвые/сильные) — включим позже, на платных тарифах ---
+    - {id: deepseek, label: "DeepSeek (платно)", base_url: "https://api.deepseek.com/v1", model: "deepseek-chat",  api_key_env: DEEPSEEK_API_KEY, cost_mult: 3}
+    - {id: kimi,     label: "Kimi",              base_url: "https://api.moonshot.cn/v1",  model: "moonshot-v1-8k", api_key_env: MOONSHOT_API_KEY, cost_mult: 3}
+    - {id: openai,   label: "ChatGPT",           base_url: "https://api.openai.com/v1",   model: "gpt-4o-mini",    api_key_env: OPENAI_API_KEY,   cost_mult: 4}
+  system_prompt: >
+    Ты — ARTurokAI, личный ассистент-программист. Отвечай по-русски, быстро и
+    понятно: сразу по делу, без вступлений и повторов вопроса. Короткие абзацы,
+    списки и шаги вместо длинного текста. Простые слова; термин — с пояснением
+    в скобках. Если нужен код — давай полный рабочий код, каждый файл отдельным
+    блоком ```язык path/к/файлу, и одной-двумя строками скажи, как запустить.
+    Если вопрос неясен — задай один уточняющий вопрос.
+
+zip:
+  max_total_mb: 500
+  max_files: 5000
+
+# ---------- Аккаунты, тарифы и коды ----------
+billing:
+  db: data/arturokai.db
+  # Где покупать коды — показывается в личном кабинете у тарифов.
+  seller_contact: "Напишите в Telegram: @your_username"
+  # Сколько кредитов стоит каждое действие.
+  costs:
+    image: 2            # одно фото (по описанию или по примеру)
+    video_second: 3     # каждая секунда видео
+    chat: 1             # одно сообщение в разделе «Код»
+  plans:
+    free:
+      name: Бесплатный
+      price: "0 ₽"
+      credits: 30          # кредитов в день
+      reset_days: 1        # каждый день кредиты обновляются
+      priority: 2          # место в очереди: меньше — раньше
+      max_image_side: 768
+      max_images: 1
+      video_max_seconds: 0 # 0 — видео недоступно
+      chat_modes: [fast]
+      external: false
+      zip: false
+      includes:
+        - "Бесплатные ИИ для кода: встроенная модель (без ключа) и модели в браузере"
+        - "Фото по описанию и по примеру до 768 px"
+        - "Выбор модели и уровень усилий"
+        - "30 кредитов каждый день"
+    start:
+      name: Старт
+      price: "490 ₽ / 30 дней"
+      credits: 600
+      days: 30
+      priority: 1
+      max_image_side: 1536
+      max_images: 4
+      video_max_seconds: 30
+      chat_modes: [fast, precise]
+      external: true
+      zip: true
+      includes:
+        - "Фото до 1536 px, до 4 за раз"
+        - "Видео до 30 секунд"
+        - "Код: быстрый и точный режим, загрузка ZIP"
+        - "600 кредитов на 30 дней"
+    pro:
+      name: Про
+      price: "1490 ₽ / 30 дней"
+      credits: 2500
+      days: 30
+      priority: 0
+      max_image_side: 2048
+      max_images: 4
+      video_max_seconds: 120
+      chat_modes: [fast, precise]
+      external: true
+      zip: true
+      includes:
+        - "Фото до 2048 px"
+        - "Видео до 2 минут"
+        - "Приоритет в очереди"
+        - "2500 кредитов на 30 дней"
+
+# ---------- Защита от спама и перегрузки (DoS/DDoS) ----------
+security:
+  requests_per_minute: 240     # запросов с одного IP в минуту; сверх лимита — 429
+  max_body_mb: 600             # максимальный размер запроса (должен быть ≥ zip.max_total_mb)
+  max_pending_jobs: 3          # сколько задач генерации держать в очереди на пользователя
+  trust_proxy_header: false    # true, если сайт стоит за обратным прокси (nginx/Cloudflare)
